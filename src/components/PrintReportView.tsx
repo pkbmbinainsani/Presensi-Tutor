@@ -3,13 +3,15 @@ import { Printer, Calendar, FileText, Download, CheckCircle2, Loader2, ShieldChe
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import * as XLSX from 'xlsx';
-import { AttendanceRecord } from '../types';
+import { AttendanceRecord, PKBMInfo } from '../types';
 import { getPKBMInfo } from '../lib/storage';
 import { getWibToday, getWibPresetRange, formatWibDateIndo, formatTimeWibDisplay } from '../lib/dateUtils';
 
 interface PrintReportViewProps {
   records: AttendanceRecord[];
+  pkbmInfo?: PKBMInfo;
 }
+
 
 // Helper to convert oklch color strings to standard browser rgb/rgba strings for html2canvas compatibility
 const parseCssColorToRgb = (colorStr: string): string => {
@@ -55,8 +57,9 @@ const sanitizeOklchInLiveDocument = () => {
   };
 };
 
-export const PrintReportView: React.FC<PrintReportViewProps> = ({ records }) => {
-  const pkbmInfo = useMemo(() => getPKBMInfo(), []);
+export const PrintReportView: React.FC<PrintReportViewProps> = ({ records, pkbmInfo: propPkbmInfo }) => {
+  const pkbmInfo = useMemo(() => propPkbmInfo || getPKBMInfo(), [propPkbmInfo]);
+
 
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');

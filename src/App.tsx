@@ -274,21 +274,23 @@ export default function App() {
         {activeTab === 'cetak' && (
           <PrintReportView
             records={attendanceRecords}
+            pkbmInfo={pkbmInfo}
           />
         )}
 
         {activeTab === 'master' && (
           <MasterDataModal
             tutors={tutors}
+            pkbmInfo={pkbmInfo}
             onTutorsChanged={handleSyncOnline}
             onPkbmInfoChanged={(updated) => {
               setPkbmInfo(updated);
-              handleSyncOnline();
             }}
             onOpenSupabaseStatus={() => setIsSupabaseModalOpen(true)}
             supabaseHealth={supabaseHealth}
           />
         )}
+
 
         {activeTab === 'ai-asisten' && (
           <AiAssistantModal

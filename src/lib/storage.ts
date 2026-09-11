@@ -149,14 +149,20 @@ export function getPKBMInfo(): PKBMInfo {
   }
 }
 
-export function savePKBMInfo(info: PKBMInfo): void {
+export async function savePKBMInfo(info: PKBMInfo): Promise<boolean> {
+  // Always save immediately to local cache
   localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(info));
 
-  // Asynchronously upsert to Supabase
-  upsertPKBMInfoOnline(info).catch(err => {
+  // Upsert to Supabase online database
+  try {
+    const success = await upsertPKBMInfoOnline(info);
+    return success;
+  } catch (err) {
     console.warn('Background Supabase upsert pkbm info note:', err);
-  });
+    return false;
+  }
 }
+
 
 // Distance calculation using Haversine formula in meters
 export function calculateDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -273,7 +279,13 @@ export async function syncAllWithSupabase(): Promise<{
       loadedInfo = onlineInfo;
       localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(onlineInfo));
       usedOnline = true;
+    } else {
+      // If table has not yet been seeded in Supabase, auto-seed default PKBM config online
+      upsertPKBMInfoOnline(loadedInfo).catch(err => {
+        console.warn('Auto-seed pkbm_info note:', err);
+      });
     }
+
 
     return {
       tutors: loadedTutors,

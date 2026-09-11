@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Users, 
   UserPlus, 
@@ -30,10 +30,11 @@ import {
 import { Tutor, PKBMInfo } from '../types';
 import { saveTutor, deleteTutor, getPKBMInfo, savePKBMInfo } from '../lib/storage';
 import { SupabaseHealthStatus } from '../lib/supabase';
-import { compressProfileImage } from '../lib/imageUtils';
+import { compressProfileImage, compressLogoImage } from '../lib/imageUtils';
 
 interface MasterDataModalProps {
   tutors: Tutor[];
+  pkbmInfo?: PKBMInfo;
   onTutorsChanged: () => void;
   onPkbmInfoChanged?: (newInfo: PKBMInfo) => void;
   onOpenSupabaseStatus?: () => void;
@@ -42,6 +43,7 @@ interface MasterDataModalProps {
 
 export const MasterDataModal: React.FC<MasterDataModalProps> = ({ 
   tutors, 
+  pkbmInfo: propPkbmInfo,
   onTutorsChanged, 
   onPkbmInfoChanged,
   onOpenSupabaseStatus,
@@ -56,13 +58,14 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Leadership & Officer Settings State
-  const [pkbmInfo, setPkbmInfo] = useState<PKBMInfo>(() => getPKBMInfo());
+  const [pkbmInfo, setPkbmInfo] = useState<PKBMInfo>(() => propPkbmInfo || getPKBMInfo());
   const [foundationManager, setFoundationManager] = useState<string>(pkbmInfo.foundationManagerName || 'H. Sugeng Wahyudi, S.E.');
   const [foundationTitle, setFoundationTitle] = useState<string>(pkbmInfo.foundationManagerTitle || 'Pengelola / Ketua Yayasan Bina Insani');
   const [headName, setHeadName] = useState<string>(pkbmInfo.headName || 'Lailatul Arifah, S.H., M.Pd.');
   const [attendanceOfficer, setAttendanceOfficer] = useState<string>(pkbmInfo.attendanceOfficerName || 'Nunung Khoiriyah');
   const [isLeadershipOpen, setIsLeadershipOpen] = useState<boolean>(false);
   const [leadershipSuccessMsg, setLeadershipSuccessMsg] = useState<string | null>(null);
+  const [isSavingLeadership, setIsSavingLeadership] = useState<boolean>(false);
 
   // Logo Customization State
   const [logoUrl, setLogoUrl] = useState<string>(pkbmInfo.logoUrl || '/logo.svg');
@@ -70,6 +73,20 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
   const [isLogoOpen, setIsLogoOpen] = useState<boolean>(false);
   const [logoSuccessMsg, setLogoSuccessMsg] = useState<string | null>(null);
   const [logoErrorMsg, setLogoErrorMsg] = useState<string | null>(null);
+  const [isSavingLogo, setIsSavingLogo] = useState<boolean>(false);
+  const [isProcessingImage, setIsProcessingImage] = useState<boolean>(false);
+
+  // Keep state in sync whenever propPkbmInfo updates (from Supabase online sync or other PC)
+  useEffect(() => {
+    if (propPkbmInfo) {
+      setPkbmInfo(propPkbmInfo);
+      setLogoUrl(propPkbmInfo.logoUrl || '/logo.svg');
+      setFoundationManager(propPkbmInfo.foundationManagerName || '');
+      setFoundationTitle(propPkbmInfo.foundationManagerTitle || '');
+      setHeadName(propPkbmInfo.headName || '');
+      setAttendanceOfficer(propPkbmInfo.attendanceOfficerName || '');
+    }
+  }, [propPkbmInfo]);
 
   // Modal / Form state
   const [isFormOpen, setIsFormOpen] = useState<boolean>(false);
@@ -173,114 +190,134 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  const handleSaveLeadership = (e: React.FormEvent) => {
+  const handleSaveLeadership = async (e: React.FormEvent) => {
     e.preventDefault();
-    const currentInfo = getPKBMInfo();
-    const updatedInfo: PKBMInfo = {
-      ...currentInfo,
-      foundationManagerName: foundationManager.trim(),
-      foundationManagerTitle: foundationTitle.trim(),
-      headName: headName.trim(),
-      attendanceOfficerName: attendanceOfficer.trim()
-    };
-    savePKBMInfo(updatedInfo);
-    setPkbmInfo(updatedInfo);
-    if (onPkbmInfoChanged) {
-      onPkbmInfoChanged(updatedInfo);
+    setIsSavingLeadership(true);
+    try {
+      const currentInfo = propPkbmInfo || getPKBMInfo();
+      const updatedInfo: PKBMInfo = {
+        ...currentInfo,
+        foundationManagerName: foundationManager.trim(),
+        foundationManagerTitle: foundationTitle.trim(),
+        headName: headName.trim(),
+        attendanceOfficerName: attendanceOfficer.trim()
+      };
+      const syncedOnline = await savePKBMInfo(updatedInfo);
+      setPkbmInfo(updatedInfo);
+      if (onPkbmInfoChanged) {
+        onPkbmInfoChanged(updatedInfo);
+      }
+      if (syncedOnline) {
+        setLeadershipSuccessMsg('✓ Pengaturan Pimpinan Laporan berhasil disimpan & disinkronkan ke Supabase Cloud!');
+      } else {
+        setLeadershipSuccessMsg('Pengaturan tersimpan lokal (koneksi online tidak tersedia).');
+      }
+    } catch (err: any) {
+      console.warn('Save leadership error:', err);
+    } finally {
+      setIsSavingLeadership(false);
+      setTimeout(() => setLeadershipSuccessMsg(null), 4000);
     }
-    setLeadershipSuccessMsg('Pengaturan Penanggung Jawab & Pimpinan Laporan berhasil diperbarui!');
-    setTimeout(() => setLeadershipSuccessMsg(null), 4000);
   };
 
-  const handleLogoFileUpload = (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      setLogoErrorMsg('Mohon pilih berkas gambar (PNG, JPG, SVG, WebP).');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const result = event.target?.result as string;
-      if (!result) return;
-      
-      if (file.type === 'image/svg+xml') {
-        setLogoUrl(result);
-        setLogoErrorMsg(null);
+  const handleLogoFileUpload = async (file: File) => {
+    setLogoErrorMsg(null);
+    setLogoSuccessMsg(null);
+    setIsProcessingImage(true);
+    try {
+      if (!file.type.startsWith('image/')) {
+        setLogoErrorMsg('Mohon pilih berkas gambar (PNG, JPG, SVG, WebP).');
+        return;
+      }
+      if (file.size > 3 * 1024 * 1024) {
+        setLogoErrorMsg('Ukuran berkas gambar maksimal 3MB.');
         return;
       }
 
-      // Optimize image size via canvas for fast and reliable storage
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const maxDim = 320;
-        let width = img.width;
-        let height = img.height;
-        if (width > height) {
-          if (width > maxDim) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          }
-        } else {
-          if (height > maxDim) {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
-          }
-        }
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-          const optimized = canvas.toDataURL('image/png');
-          setLogoUrl(optimized);
-          setLogoErrorMsg(null);
-        } else {
-          setLogoUrl(result);
-          setLogoErrorMsg(null);
-        }
-      };
-      img.src = result;
-    };
-    reader.readAsDataURL(file);
+      const optimized = await compressLogoImage(file, 400);
+      setLogoUrl(optimized);
+      setLogoSuccessMsg('Berkas logo berhasil diproses! Klik tombol "Terapkan & Simpan Logo Baru" untuk menyinkronkan ke cloud.');
+    } catch (err: any) {
+      setLogoErrorMsg('Gagal memproses berkas gambar: ' + (err?.message || 'Error'));
+    } finally {
+      setIsProcessingImage(false);
+    }
   };
 
-  const handleSaveLogo = () => {
+  const handleSaveLogo = async () => {
     const finalUrl = logoUrl.trim() || '/logo.svg';
-    const currentInfo = getPKBMInfo();
-    const updatedInfo: PKBMInfo = {
-      ...currentInfo,
-      logoUrl: finalUrl
-    };
-    savePKBMInfo(updatedInfo);
-    setPkbmInfo(updatedInfo);
-    if (onPkbmInfoChanged) {
-      onPkbmInfoChanged(updatedInfo);
+    setIsSavingLogo(true);
+    setLogoErrorMsg(null);
+    setLogoSuccessMsg(null);
+
+    try {
+      const currentInfo = propPkbmInfo || getPKBMInfo();
+      const updatedInfo: PKBMInfo = {
+        ...currentInfo,
+        logoUrl: finalUrl
+      };
+
+      // 1. Save to local storage and upsert to Supabase online database
+      const isOnlineSynced = await savePKBMInfo(updatedInfo);
+      setPkbmInfo(updatedInfo);
+
+      // 2. Notify parent component
+      if (onPkbmInfoChanged) {
+        onPkbmInfoChanged(updatedInfo);
+      }
+
+      // 3. Inform user of online synchronization status
+      if (isOnlineSynced) {
+        setLogoSuccessMsg('✓ Logo lembaga PKBM berhasil disimpan & disinkronkan ke Supabase Cloud! Logo otomatis tampil di semua komputer dan HP.');
+        setToastMessage('✓ Logo tersinkron ke semua komputer!');
+      } else {
+        setLogoSuccessMsg('Logo tersimpan di perangkat ini. Namun gagal terhubung ke Supabase Cloud. Silakan periksa koneksi internet atau status Supabase.');
+        setToastMessage('Logo tersimpan lokal');
+      }
+    } catch (err: any) {
+      setLogoErrorMsg('Terjadi kesalahan saat menyimpan logo: ' + (err?.message || 'Error'));
+    } finally {
+      setIsSavingLogo(false);
+      setTimeout(() => {
+        setLogoSuccessMsg(null);
+      }, 5000);
     }
-    setLogoSuccessMsg('Logo lembaga PKBM berhasil diperbarui dan diterapkan ke seluruh sistem!');
-    setToastMessage('Logo PKBM berhasil diperbarui!');
-    setTimeout(() => {
-      setLogoSuccessMsg(null);
-    }, 3500);
   };
 
-  const handleResetToDefaultLogo = () => {
+  const handleResetToDefaultLogo = async () => {
     const defaultUrl = '/logo.svg';
-    setLogoUrl(defaultUrl);
-    setLogoInputUrl('');
-    const currentInfo = getPKBMInfo();
-    const updatedInfo: PKBMInfo = {
-      ...currentInfo,
-      logoUrl: defaultUrl
-    };
-    savePKBMInfo(updatedInfo);
-    setPkbmInfo(updatedInfo);
-    if (onPkbmInfoChanged) {
-      onPkbmInfoChanged(updatedInfo);
+    setIsSavingLogo(true);
+    setLogoErrorMsg(null);
+    setLogoSuccessMsg(null);
+
+    try {
+      setLogoUrl(defaultUrl);
+      setLogoInputUrl('');
+      const currentInfo = propPkbmInfo || getPKBMInfo();
+      const updatedInfo: PKBMInfo = {
+        ...currentInfo,
+        logoUrl: defaultUrl
+      };
+      const isOnlineSynced = await savePKBMInfo(updatedInfo);
+      setPkbmInfo(updatedInfo);
+      if (onPkbmInfoChanged) {
+        onPkbmInfoChanged(updatedInfo);
+      }
+
+      if (isOnlineSynced) {
+        setLogoSuccessMsg('✓ Logo dikembalikan ke logo default resmi PKBM Bina Insani dan disinkronkan ke seluruh komputer.');
+        setToastMessage('Logo kembali ke default resmi');
+      } else {
+        setLogoSuccessMsg('Logo default diterapkan secara lokal.');
+      }
+    } catch (err: any) {
+      setLogoErrorMsg('Gagal mereset logo: ' + (err?.message || 'Error'));
+    } finally {
+      setIsSavingLogo(false);
+      setTimeout(() => setLogoSuccessMsg(null), 3500);
     }
-    setLogoSuccessMsg('Logo dikembalikan ke logo default resmi PKBM Bina Insani.');
-    setToastMessage('Logo kembali ke default!');
-    setTimeout(() => setLogoSuccessMsg(null), 3000);
   };
+
 
   const handleToggleActive = (tutor: Tutor) => {
     saveTutor({
@@ -400,11 +437,18 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
                   Pilih berkas gambar format PNG (latar transparan disarankan), JPG, SVG, atau WebP dari perangkat Anda.
                 </p>
                 <label className="cursor-pointer border-2 border-dashed border-slate-600 hover:border-amber-400 hover:bg-slate-800/60 rounded-xl p-4 flex flex-col items-center justify-center gap-2 text-center transition-all block">
-                  <Upload className="w-6 h-6 text-amber-400" />
-                  <span className="font-extrabold text-white text-xs">Pilih File Logo dari Perangkat</span>
-                  <span className="text-[10px] text-slate-400">Ukuran otomatis dioptimalkan agar ringan & cepat</span>
+                  {isProcessingImage ? (
+                    <RefreshCw className="w-6 h-6 text-amber-400 animate-spin" />
+                  ) : (
+                    <Upload className="w-6 h-6 text-amber-400" />
+                  )}
+                  <span className="font-extrabold text-white text-xs">
+                    {isProcessingImage ? 'Memproses & Mengoptimalkan Gambar...' : 'Pilih File Logo dari Perangkat'}
+                  </span>
+                  <span className="text-[10px] text-slate-400">Ukuran otomatis dioptimalkan agar ringan & cepat sinkron ke semua komputer</span>
                   <input
                     type="file"
+                    disabled={isProcessingImage || isSavingLogo}
                     accept="image/png, image/jpeg, image/svg+xml, image/webp"
                     onChange={(e) => {
                       const file = e.target.files?.[0];
@@ -451,22 +495,23 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
                 {/* Preview Box */}
                 <div className="pt-2 border-t border-slate-700/80 flex items-center justify-between">
                   <div className="flex items-center gap-2.5">
-                    <div className="w-10 h-10 rounded-xl bg-white p-1 border border-amber-400 flex items-center justify-center shrink-0">
+                    <div className="w-10 h-10 rounded-xl bg-white p-1 border border-amber-400 flex items-center justify-center shrink-0 shadow-sm">
                       <img src={logoUrl || '/logo.svg'} alt="Preview" className="w-full h-full object-contain" />
                     </div>
                     <div>
-                      <p className="text-[10px] text-slate-400">Pratinjau Logo:</p>
+                      <p className="text-[10px] text-slate-400">Pratinjau Logo Aktif:</p>
                       <p className="font-bold text-white text-xs truncate max-w-[150px]">
-                        {logoUrl.startsWith('data:') ? 'Berkas Unggahan (Lokal)' : logoUrl}
+                        {logoUrl.startsWith('data:') ? 'Berkas Baru (Siap Cloud)' : logoUrl}
                       </p>
                     </div>
                   </div>
                   <button
                     type="button"
+                    disabled={isSavingLogo}
                     onClick={handleResetToDefaultLogo}
-                    className="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition"
+                    className="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-slate-200 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition"
                   >
-                    <RefreshCw className="w-3 h-3" />
+                    <RefreshCw className={`w-3 h-3 ${isSavingLogo ? 'animate-spin' : ''}`} />
                     <span>Logo Default</span>
                   </button>
                 </div>
@@ -485,10 +530,20 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
               <button
                 type="button"
                 onClick={handleSaveLogo}
-                className="px-6 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl font-extrabold shadow-md flex items-center gap-1.5"
+                disabled={isSavingLogo || isProcessingImage}
+                className="px-6 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 rounded-xl font-extrabold shadow-md flex items-center gap-1.5 transition"
               >
-                <Check className="w-4 h-4" />
-                <span>Terapkan & Simpan Logo Baru</span>
+                {isSavingLogo ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Menyimpan ke Supabase Cloud...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>Terapkan & Simpan Logo Baru</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -496,6 +551,7 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
       </div>
 
       {/* Leadership Configuration Banner */}
+
       <div className="bg-gradient-to-r from-slate-900 to-blue-950 text-white p-4 sm:p-5 rounded-2xl shadow-md border border-slate-800 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -651,12 +707,23 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
               </button>
               <button
                 type="submit"
-                className="px-6 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-xl font-extrabold shadow-md flex items-center gap-1.5"
+                disabled={isSavingLeadership}
+                className="px-6 py-2 bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-slate-950 rounded-xl font-extrabold shadow-md flex items-center gap-1.5 transition"
               >
-                <Check className="w-4 h-4" />
-                <span>Simpan Perubahan Pimpinan</span>
+                {isSavingLeadership ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Menyimpan ke Cloud...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>Simpan Perubahan Pimpinan</span>
+                  </>
+                )}
               </button>
             </div>
+
           </form>
         )}
       </div>
