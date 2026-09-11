@@ -1,0 +1,11 @@
+{
+  "name": "Presensi Tutor",
+  "description": "Sistem presensi kegiatan tutor PKBM Bina Insani Sumowono berbasis lokasi real-time, foto kegiatan, dan rekapitulasi otomatis.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

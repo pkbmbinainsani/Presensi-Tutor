@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+/* Leaflet Custom Pin Fixes */
+.leaflet-container {
+  font-family: inherit;
+  z-index: 1;
+}
+
+.custom-pkbm-pin, .custom-user-pin {
+  background: transparent;
+  border: none;
+}
+
+/* Print Styles */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide header, navigation, filters, buttons during print */
+  header, nav, button, .no-print, [role="tablist"], input, select, .print-hide {
+    display: none !important;
+  }
+
+  /* Ensure printable report sheet takes full width on paper */
+  #printable-report-sheet {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: white !important;
+  }
+
+  /* Keep table borders clear in print */
+  table, th, td {
+    border-color: #000000 !important;
+  }
+
+  @page {
+    size: auto;
+    margin: 10mm;
+  }
+}
+
