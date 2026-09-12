@@ -20,13 +20,16 @@ import {
   Unlock,
   ShieldAlert,
   Briefcase,
-  Check
+  Check,
+  Eye,
+  AlertTriangle
 } from 'lucide-react';
 import { Tutor, ProgramType, GeoLocationData, AttendanceRecord, UserSession, ClassLocation } from '../types';
 import { PKBM_CONFIG, INITIAL_CLASS_LOCATIONS } from '../data/mockData';
 import { calculateDistanceMeters, saveAttendanceRecord } from '../lib/storage';
 import { MapView } from './MapView';
 import { TutorProfileModal } from './TutorProfileModal';
+import { PhotoWatermarkModal } from './PhotoWatermarkModal';
 import { getWibToday, getWibTime, getWibTimeWithSuffix, formatWibDateIndo } from '../lib/dateUtils';
 
 interface AttendanceFormProps {
@@ -46,6 +49,20 @@ const PROGRAM_OPTIONS: ProgramType[] = [
   'Keaksaraan Fungsional (KF)',
   'PAUD Bina Insani',
   'Kursus & Keterampilan / Vokasi'
+];
+
+const SUBJECT_PRESETS: string[] = [
+  'Bahasa Indonesia',
+  'Bahasa Inggris',
+  'Ekonomi',
+  'Geografi',
+  'Informatika',
+  'IPA',
+  'IPS',
+  'Matematika',
+  'Pendidikan Pancasila',
+  'Sejarah',
+  'Sosiologi'
 ];
 
 export const AttendanceForm: React.FC<AttendanceFormProps> = ({ 
@@ -91,7 +108,18 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
   // Status submission feedback & Refs
   const [submitSuccess, setSubmitSuccess] = useState<boolean>(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [selectedWatermarkRecord, setSelectedWatermarkRecord] = useState<AttendanceRecord | null>(null);
   const topAlertRef = useRef<HTMLDivElement>(null);
+
+  // Tutor Today Attendance Tracking (Enforce 1x per day)
+  const selectedTutorObj = tutors.find(t => t.id === selectedTutorId);
+  const todayStr = getWibToday();
+  const tutorTodayRecords = allRecords.filter(r => 
+    (r.tutorId === selectedTutorId || (selectedTutorObj && r.tutorName === selectedTutorObj.name)) &&
+    r.date === todayStr
+  );
+  const hasSubmittedToday = tutorTodayRecords.length > 0;
+  const latestTodayRecord = tutorTodayRecords[0];
 
   // Helper to simulate valid GPS inside PKBM Gedung Utama
   const simulateValidGpsLocation = () => {
@@ -319,6 +347,13 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
     e.preventDefault();
     setFormError(null);
 
+    // Enforce 1x daily attendance restriction per tutor
+    if (hasSubmittedToday) {
+      setFormError(`⛔ Presensi Dibatasi: Dalam sehari Tutor hanya bisa melakukan presensi sebanyak satu kali. Kegiatan ${selectedTutorObj?.name || 'Anda'} hari ini (${formatWibDateIndo(todayStr, 'long')}) telah dicatat dalam sistem.`);
+      topAlertRef.current?.scrollIntoView({ behavior: 'smooth' });
+      return;
+    }
+
     if (!selectedTutorId) {
       setFormError("Silakan pilih Identitas Tutor / Pendidik terlebih dahulu.");
       topAlertRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -398,23 +433,14 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
     }, 5000);
   };
 
-  const selectedTutorObj = tutors.find(t => t.id === selectedTutorId);
-  const todayStr = getWibToday();
-  const tutorTodayRecords = allRecords.filter(r => 
-    (r.tutorId === selectedTutorId || (selectedTutorObj && r.tutorName === selectedTutorObj.name)) &&
-    r.date === todayStr
-  );
-  const hasSubmittedToday = tutorTodayRecords.length > 0;
-  const latestTodayRecord = tutorTodayRecords[0];
-
   return (
     <div className="max-w-5xl mx-auto space-y-6">
 
       <div ref={topAlertRef} />
 
-      {/* Tutor Already Completed Attendance Banner Notification */}
-      {currentUser?.role === 'tutor' && hasSubmittedToday && (
-        <div className="bg-gradient-to-r from-emerald-900 via-teal-900 to-slate-900 text-white p-5 rounded-3xl shadow-xl border-2 border-emerald-400/50 relative overflow-hidden space-y-4 animate-in fade-in zoom-in duration-300">
+      {/* Tutor Already Completed Attendance Banner Notification (1x per Day Enforcement) */}
+      {currentUser?.role === 'tutor' && hasSubmittedToday && latestTodayRecord && (
+        <div className="bg-gradient-to-r from-emerald-950 via-teal-950 to-slate-950 text-white p-5 rounded-3xl shadow-xl border-2 border-emerald-400/60 relative overflow-hidden space-y-4 animate-in fade-in zoom-in duration-300">
           <div className="absolute right-0 top-0 translate-x-6 -translate-y-6 w-36 h-36 bg-emerald-500/20 rounded-full blur-2xl pointer-events-none" />
           
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 relative z-10">
@@ -425,25 +451,36 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
               <div>
                 <div className="flex items-center gap-2">
                   <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider bg-emerald-400/20 text-emerald-300 border border-emerald-400/30">
-                    STATUS TERVERIFIKASI SISTEM
+                    PRESENSI HARI INI TERCATAT (1X SEHARI)
                   </span>
                   <span className="text-xs font-mono font-bold text-emerald-200">
                     {latestTodayRecord.timeStart} WIB
                   </span>
                 </div>
                 <h3 className="text-base sm:text-lg font-extrabold text-white mt-1">
-                  Terima kasih, kehadiran Anda telah dicatat pada sistem.
+                  Terimakasih, kegiatan anda hari ini telah dicatat dalam sistem
                 </h3>
                 <p className="text-xs text-emerald-100/90 mt-0.5 leading-relaxed">
-                  Laporan presensi & jurnal mengajar untuk <strong className="text-amber-300">{selectedTutorObj?.name}</strong> pada tanggal <strong className="text-white">{latestTodayRecord.date}</strong> telah tersimpan otomatis di basis data PKBM.
+                  Laporan presensi & jurnal mengajar untuk <strong className="text-amber-300">{selectedTutorObj?.name}</strong> pada hari ini (<strong className="text-white">{formatWibDateIndo(latestTodayRecord.date, 'long')}</strong>) telah tersimpan di sistem. Sesuai aturan, dalam sehari tutor hanya bisa melakukan presensi sebanyak satu kali.
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {latestTodayRecord.photoUrl && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedWatermarkRecord(latestTodayRecord)}
+                  className="px-3.5 py-2 rounded-xl text-xs font-black bg-emerald-700 hover:bg-emerald-600 text-white border border-emerald-400/40 shadow-sm flex items-center gap-1.5 transition-all cursor-pointer"
+                  title="Lihat Bukti Foto & Watermark Resmi"
+                >
+                  <Eye className="w-4 h-4 text-amber-300" />
+                  <span>Foto Watermark</span>
+                </button>
+              )}
               <span className="px-3.5 py-2 rounded-xl text-xs font-black bg-white/10 text-emerald-200 border border-white/20 shadow-sm flex items-center gap-1.5">
                 <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                {tutorTodayRecords.length}x Presensi Hari Ini
+                1x Sehari Terpenuhi
               </span>
             </div>
           </div>
@@ -624,6 +661,29 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
                     Spesialisasi: {selectedTutorObj.specialization} • No. HP: {selectedTutorObj.phone}
                   </p>
                 )}
+                {selectedTutorObj && hasSubmittedToday && latestTodayRecord && (
+                  <div className="mt-2.5 p-3 bg-amber-50 border border-amber-300 rounded-xl text-amber-900 text-xs flex items-center justify-between gap-2 shadow-sm">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <div>
+                        <span className="font-bold">Perhatian (Presensi Dibatasi 1x Sehari):</span>
+                        <p className="text-[11px] text-amber-800 mt-0.5">
+                          Tutor <strong>{selectedTutorObj.name}</strong> sudah melakukan presensi hari ini pada pukul <strong>{latestTodayRecord.timeStart} WIB</strong> ({latestTodayRecord.subjectTitle}).
+                        </p>
+                      </div>
+                    </div>
+                    {latestTodayRecord.photoUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedWatermarkRecord(latestTodayRecord)}
+                        className="px-2.5 py-1.5 bg-amber-200 hover:bg-amber-300 text-amber-950 font-black text-[10px] rounded-lg border border-amber-400 shrink-0 flex items-center gap-1 cursor-pointer transition-all"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-amber-900" />
+                        <span>Lihat Foto</span>
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -721,14 +781,20 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
               </label>
               <input
                 type="text"
+                list="subject-presets-list"
                 value={subjectTitle}
                 onChange={(e) => setSubjectTitle(e.target.value)}
-                placeholder="Contoh: Matematika Terapan Paket C"
+                placeholder="Pilih dari preset di bawah atau ketik nama mata pelajaran"
                 className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-semibold text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:bg-white outline-none transition-all shadow-inner"
               />
+              <datalist id="subject-presets-list">
+                {SUBJECT_PRESETS.map((sub) => (
+                  <option key={sub} value={sub} />
+                ))}
+              </datalist>
               {/* Quick Subject Suggestion Chips */}
               <div className="flex flex-wrap gap-1.5 mt-2">
-                {['Matematika Terapan', 'Bahasa Indonesia', 'Sosiologi & Pemberdayaan', 'IPA Terpadu', 'Keterampilan Vokasi'].map((sub) => (
+                {SUBJECT_PRESETS.map((sub) => (
                   <button
                     key={sub}
                     type="button"
@@ -1125,27 +1191,61 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
             )}
           </div>
 
-          {/* Submit Button */}
-          <button
-            type="submit"
-            className={`w-full font-black py-4 px-6 rounded-2xl shadow-xl flex items-center justify-center gap-2.5 text-base sm:text-lg transition-all active:scale-98 cursor-pointer ${
-              dutyType === 'Dinas Luar'
-                ? 'bg-gradient-to-r from-blue-700 via-indigo-700 to-blue-800 hover:from-blue-800 hover:to-indigo-900 text-white shadow-blue-900/30 border-2 border-blue-400/40'
-                : 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white shadow-emerald-900/30 border-2 border-emerald-400/40'
-            }`}
-          >
-            {dutyType === 'Dinas Luar' ? (
-              <>
-                <Briefcase className="w-6 h-6 text-amber-300 shrink-0" />
-                <span>KIRIM PRESENSI DINAS LUAR</span>
-              </>
-            ) : (
-              <>
-                <ShieldCheck className="w-6 h-6 text-amber-300 shrink-0" />
-                <span>KIRIM PRESENSI KEGIATAN TUTOR</span>
-              </>
-            )}
-          </button>
+          {/* Submit Button or 1x Attendance Enforced Message */}
+          {hasSubmittedToday ? (
+            <div className="w-full p-5 rounded-2xl bg-emerald-50 border-2 border-emerald-400 flex flex-col sm:flex-row items-center justify-between gap-4 text-emerald-950 shadow-md animate-in fade-in duration-300">
+              <div className="flex items-center gap-3.5">
+                <div className="p-3 bg-emerald-700 text-white rounded-2xl shrink-0 shadow-sm">
+                  <CheckCircle2 className="w-7 h-7 text-amber-300" />
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-sm sm:text-base text-emerald-950">
+                    Terimakasih, kegiatan anda hari ini telah dicatat dalam sistem
+                  </h4>
+                  <p className="text-xs text-emerald-800 mt-0.5 leading-relaxed">
+                    Dalam sehari Tutor hanya bisa melakukan presensi sebanyak satu kali. Presensi kegiatan {selectedTutorObj?.name || 'Anda'} hari ini telah tersimpan pada pukul <strong>{latestTodayRecord?.timeStart} WIB</strong>.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {latestTodayRecord?.photoUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedWatermarkRecord(latestTodayRecord)}
+                    className="px-3.5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-black rounded-xl shadow flex items-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <Eye className="w-4 h-4 text-amber-300" />
+                    <span>Lihat Foto Watermark</span>
+                  </button>
+                )}
+                <span className="px-3.5 py-2.5 bg-white text-emerald-900 font-black text-xs rounded-xl border border-emerald-300 shadow-sm flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                  Presensi Selesai
+                </span>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="submit"
+              className={`w-full font-black py-4 px-6 rounded-2xl shadow-xl flex items-center justify-center gap-2.5 text-base sm:text-lg transition-all active:scale-98 cursor-pointer ${
+                dutyType === 'Dinas Luar'
+                  ? 'bg-gradient-to-r from-blue-700 via-indigo-700 to-blue-800 hover:from-blue-800 hover:to-indigo-900 text-white shadow-blue-900/30 border-2 border-blue-400/40'
+                  : 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white shadow-emerald-900/30 border-2 border-emerald-400/40'
+              }`}
+            >
+              {dutyType === 'Dinas Luar' ? (
+                <>
+                  <Briefcase className="w-6 h-6 text-amber-300 shrink-0" />
+                  <span>KIRIM PRESENSI DINAS LUAR</span>
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="w-6 h-6 text-amber-300 shrink-0" />
+                  <span>KIRIM PRESENSI KEGIATAN TUTOR</span>
+                </>
+              )}
+            </button>
+          )}
 
         </div>
 
@@ -1203,7 +1303,18 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
                         </p>
                       </div>
                     </div>
-                    <div className="text-right sm:self-center shrink-0">
+                    <div className="flex items-center gap-2 text-right sm:self-center shrink-0">
+                      {rec.photoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedWatermarkRecord(rec)}
+                          className="px-2.5 py-1 text-[11px] font-bold text-emerald-800 bg-white hover:bg-emerald-100 rounded-lg border border-emerald-300 flex items-center gap-1 shadow-sm transition-all cursor-pointer"
+                          title="Lihat Foto Berwatermark Resmi"
+                        >
+                          <Eye className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Watermark</span>
+                        </button>
+                      )}
                       <span className={`inline-block px-2.5 py-1 rounded-full text-xs font-bold ${
                         rec.status === 'Hadir Valid' ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-amber-100 text-amber-800 border border-amber-300'
                       }`}>
@@ -1228,6 +1339,14 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
             onTutorUpdated?.(updatedTutor);
           }}
           isModal={true}
+        />
+      )}
+
+      {/* Modal Watermark Foto Presensi */}
+      {selectedWatermarkRecord && (
+        <PhotoWatermarkModal
+          record={selectedWatermarkRecord}
+          onClose={() => setSelectedWatermarkRecord(null)}
         />
       )}
     </div>

@@ -1,15 +1,16 @@
 import React, { useState, useMemo } from 'react';
-import { Printer, Calendar, FileText, Download, CheckCircle2, Loader2, ShieldCheck, School, FileSpreadsheet } from 'lucide-react';
+import { Printer, Calendar, FileText, Download, CheckCircle2, Loader2, ShieldCheck, School, FileSpreadsheet, Users } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import * as XLSX from 'xlsx';
-import { AttendanceRecord, PKBMInfo } from '../types';
+import { AttendanceRecord, PKBMInfo, Tutor } from '../types';
 import { getPKBMInfo } from '../lib/storage';
 import { getWibToday, getWibPresetRange, formatWibDateIndo, formatTimeWibDisplay } from '../lib/dateUtils';
 
 interface PrintReportViewProps {
   records: AttendanceRecord[];
   pkbmInfo?: PKBMInfo;
+  tutors?: Tutor[];
 }
 
 
@@ -57,17 +58,47 @@ const sanitizeOklchInLiveDocument = () => {
   };
 };
 
-export const PrintReportView: React.FC<PrintReportViewProps> = ({ records, pkbmInfo: propPkbmInfo }) => {
+export const PrintReportView: React.FC<PrintReportViewProps> = ({ records, pkbmInfo: propPkbmInfo, tutors: propTutors = [] }) => {
   const pkbmInfo = useMemo(() => propPkbmInfo || getPKBMInfo(), [propPkbmInfo]);
-
 
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [selectedMonthYear, setSelectedMonthYear] = useState<string>('');
   const [selectedProgram, setSelectedProgram] = useState<string>('ALL');
+  const [selectedTutor, setSelectedTutor] = useState<string>('ALL');
   const [paperSize, setPaperSize] = useState<'F4' | 'A4'>('F4');
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
   const [pdfSuccessMessage, setPdfSuccessMessage] = useState<string | null>(null);
+
+  // List of unique tutors for filter
+  const availableTutors = useMemo(() => {
+    const list: { id: string; name: string }[] = [];
+    const seen = new Set<string>();
+
+    if (propTutors && propTutors.length > 0) {
+      propTutors.forEach(t => {
+        if (!seen.has(t.id)) {
+          seen.add(t.id);
+          list.push({ id: t.id, name: t.name });
+        }
+      });
+    }
+
+    records.forEach(r => {
+      const key = r.tutorId || r.tutorName;
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        list.push({ id: r.tutorId || r.tutorName, name: r.tutorName });
+      }
+    });
+
+    return list.sort((a, b) => a.name.localeCompare(b.name, 'id'));
+  }, [propTutors, records]);
+
+  const selectedTutorObj = useMemo(() => {
+    if (selectedTutor === 'ALL') return null;
+    return availableTutors.find(t => t.id === selectedTutor || t.name === selectedTutor);
+  }, [selectedTutor, availableTutors]);
 
   // Quick Preset Period Handler (Murni Zona Waktu WIB UTC+7)
   const setPresetPeriod = (preset: 'thisMonth' | 'last3Months' | 'thisYear' | 'all') => {
@@ -84,9 +115,14 @@ export const PrintReportView: React.FC<PrintReportViewProps> = ({ records, pkbmI
       if (endDate && r.date > endDate) return false;
       if (!startDate && !endDate && selectedMonthYear && !r.date.startsWith(selectedMonthYear)) return false;
       if (selectedProgram !== 'ALL' && r.program !== selectedProgram) return false;
+      if (selectedTutor !== 'ALL') {
+        const matchId = r.tutorId === selectedTutor;
+        const matchName = r.tutorName === selectedTutor || (selectedTutorObj && r.tutorName === selectedTutorObj.name);
+        if (!matchId && !matchName) return false;
+      }
       return true;
     });
-  }, [records, startDate, endDate, selectedMonthYear, selectedProgram]);
+  }, [records, startDate, endDate, selectedMonthYear, selectedProgram, selectedTutor, selectedTutorObj]);
 
   // Formatted Month / Period Title
   const formattedPeriodTitle = useMemo(() => {
@@ -229,7 +265,8 @@ export const PrintReportView: React.FC<PrintReportViewProps> = ({ records, pkbmI
     try {
       const pdf = await generatePdfInstance();
       const cleanPeriodStr = formattedPeriodTitle.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-      const filename = `Laporan_Presensi_PKBM_Bina_Insani_${paperSize}_${cleanPeriodStr || 'periode'}.pdf`;
+      const tutorSuffix = selectedTutorObj ? `_Tutor_${selectedTutorObj.name.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
+      const filename = `Laporan_Presensi_PKBM_Bina_Insani${tutorSuffix}_${paperSize}_${cleanPeriodStr || 'periode'}.pdf`;
 
       pdf.save(filename);
       setPdfSuccessMessage(`Dokumen PDF (${paperSize}) "${filename}" berhasil diunduh.`);
@@ -250,12 +287,14 @@ export const PrintReportView: React.FC<PrintReportViewProps> = ({ records, pkbmI
     }
 
     const cleanPeriodStr = formattedPeriodTitle.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+    const tutorSuffix = selectedTutorObj ? `_Tutor_${selectedTutorObj.name.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
 
     // Prepare structured worksheet data
     const excelRows: (string | number)[][] = [
       ["PUSAT KEGIATAN BELAJAR MASYARAKAT (PKBM) BINA INSANI SUMOWONO"],
       ["LAPORAN REKAPITULASI PRESENSI KEGIATAN TUTOR"],
       [`PERIODE: ${formattedPeriodTitle.toUpperCase()}`],
+      [`TUTOR: ${selectedTutorObj ? selectedTutorObj.name.toUpperCase() : 'SEMUA TUTOR'}`],
       [`PROGRAM / KELOMPOK: ${selectedProgram === 'ALL' ? 'SEMUA PROGRAM' : selectedProgram}`],
       [`NPSN: ${pkbmInfo.npsn} | ALAMAT: RT.01/RW.02 Dusun Kawedusan Desa Ngadikerso Sumowono`],
       [], // Empty row
@@ -327,7 +366,7 @@ export const PrintReportView: React.FC<PrintReportViewProps> = ({ records, pkbmI
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Laporan Presensi');
 
-    XLSX.writeFile(workbook, `Laporan_Presensi_PKBM_Bina_Insani_${cleanPeriodStr || 'periode'}.xlsx`);
+    XLSX.writeFile(workbook, `Laporan_Presensi_PKBM_Bina_Insani${tutorSuffix}_${cleanPeriodStr || 'periode'}.xlsx`);
     setPdfSuccessMessage('Dokumen Excel (.xlsx) berhasil diunduh.');
     setTimeout(() => setPdfSuccessMessage(null), 5000);
   };
@@ -340,11 +379,13 @@ export const PrintReportView: React.FC<PrintReportViewProps> = ({ records, pkbmI
     }
 
     const cleanPeriodStr = formattedPeriodTitle.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+    const tutorSuffix = selectedTutorObj ? `_Tutor_${selectedTutorObj.name.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
 
     const csvRows: string[][] = [
       ["PKBM BINA INSANI SUMOWONO"],
       ["LAPORAN REKAPITULASI PRESENSI KEGIATAN TUTOR"],
       [`PERIODE: ${formattedPeriodTitle}`],
+      [`TUTOR: ${selectedTutorObj ? selectedTutorObj.name : 'SEMUA TUTOR'}`],
       [""],
       ["NO", "TANGGAL", "JAM", "NAMA TUTOR", "PROGRAM", "MATA PELAJARAN", "KELOMPOK", "JUMLAH WB", "KOORDINAT LOKASI", "STATUS"]
     ];
@@ -369,7 +410,7 @@ export const PrintReportView: React.FC<PrintReportViewProps> = ({ records, pkbmI
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `Laporan_Presensi_PKBM_Bina_Insani_${cleanPeriodStr || 'periode'}.csv`);
+    link.setAttribute("download", `Laporan_Presensi_PKBM_Bina_Insani${tutorSuffix}_${cleanPeriodStr || 'periode'}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -508,8 +549,8 @@ export const PrintReportView: React.FC<PrintReportViewProps> = ({ records, pkbmI
           </div>
         )}
 
-        {/* Date Filters Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-3 border-t border-slate-100 text-xs items-end">
+        {/* Date & Tutor Filters Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 pt-3 border-t border-slate-100 text-xs items-end">
           <div>
             <label className="block text-[11px] font-bold text-slate-600 mb-1">Dari Tanggal</label>
             <input
@@ -549,6 +590,26 @@ export const PrintReportView: React.FC<PrintReportViewProps> = ({ records, pkbmI
               <option value="Paket C (Setara SMA)">Paket C (Setara SMA)</option>
               <option value="Keaksaraan Fungsional (KF)">Keaksaraan Fungsional (KF)</option>
               <option value="Kursus & Keterampilan / Vokasi">Kursus & Keterampilan / Vokasi</option>
+            </select>
+          </div>
+
+          {/* Filter Tutor / Pendidik */}
+          <div>
+            <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center gap-1">
+              <Users className="w-3.5 h-3.5 text-emerald-700" />
+              <span>Filter Nama Tutor</span>
+            </label>
+            <select
+              value={selectedTutor}
+              onChange={(e) => setSelectedTutor(e.target.value)}
+              className="w-full bg-emerald-50/60 border border-emerald-300 rounded-xl px-3 py-2 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+            >
+              <option value="ALL">Semua Tutor ({availableTutors.length})</option>
+              {availableTutors.map((tut) => (
+                <option key={tut.id} value={tut.id}>
+                  {tut.name}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -642,6 +703,16 @@ export const PrintReportView: React.FC<PrintReportViewProps> = ({ records, pkbmI
           </h2>
           <p className="text-xs font-semibold text-slate-700">
             PERIODE: <span className="uppercase font-bold text-emerald-900">{formattedPeriodTitle}</span>
+            {selectedTutorObj && (
+              <span className="ml-2 font-bold text-slate-900">
+                | TUTOR: <span className="uppercase text-emerald-900 font-extrabold">{selectedTutorObj.name}</span>
+              </span>
+            )}
+            {selectedProgram !== 'ALL' && (
+              <span className="ml-2 font-bold text-slate-900">
+                | PROGRAM: <span className="uppercase text-emerald-900 font-extrabold">{selectedProgram}</span>
+              </span>
+            )}
           </p>
         </div>
 
@@ -664,7 +735,7 @@ export const PrintReportView: React.FC<PrintReportViewProps> = ({ records, pkbmI
               {reportRecords.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-8 text-center text-slate-500 italic">
-                    Tidak ada catatan presensi pada periode tanggal yang dipilih.
+                    Tidak ada catatan presensi pada periode tanggal atau filter tutor yang dipilih.
                   </td>
                 </tr>
               ) : (

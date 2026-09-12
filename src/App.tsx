@@ -275,6 +275,7 @@ export default function App() {
           <PrintReportView
             records={attendanceRecords}
             pkbmInfo={pkbmInfo}
+            tutors={tutors}
           />
         )}
 
