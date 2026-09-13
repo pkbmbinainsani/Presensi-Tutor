@@ -21,6 +21,7 @@ import { PKBM_CONFIG } from '../data/mockData';
 import { UserSession } from '../types';
 import { SupabaseHealthStatus } from '../lib/supabase';
 import { getWibTimeWithSuffix, formatWibDateIndo } from '../lib/dateUtils';
+import { PWAInstallButton } from './PWAInstallComponents';
 
 interface HeaderProps {
   activeTab: string;
@@ -119,8 +120,11 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Right Section: User Panel, Stats, Location & Top-Right Keluar Button */}
           <div className="flex flex-col items-start lg:items-end gap-3 w-full lg:w-auto">
-            {/* Top Row: User Connected Card + Supabase Cloud Status + Prominent Keluar Button (Top Right) */}
+            {/* Top Row: User Connected Card + Supabase Cloud Status + PWA Install + Prominent Keluar Button (Top Right) */}
             <div className="flex items-center justify-between lg:justify-end w-full lg:w-auto gap-2.5 sm:gap-3 flex-wrap">
+              {/* PWA Mobile & Desktop Install Button */}
+              <PWAInstallButton variant="header" />
+
               {/* Supabase Status Pill */}
               <button
                 type="button"

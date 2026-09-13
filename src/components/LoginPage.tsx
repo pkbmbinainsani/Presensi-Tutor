@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Tutor, UserSession, PKBMInfo } from '../types';
 import { SupabaseHealthStatus } from '../lib/supabase';
+import { PWAInstallButton } from './PWAInstallComponents';
 import { 
   User, 
   ShieldCheck, 
@@ -125,6 +126,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         <p className="text-blue-200 text-sm sm:text-base mt-1.5 font-bold max-w-md mx-auto">
           Sistem Absensi Kehadiran & Kegiatan Tutor
         </p>
+
+        {/* PWA Install Button for Android / iPhone */}
+        <div className="w-full max-w-md mt-4 px-2">
+          <PWAInstallButton variant="login" />
+        </div>
       </div>
 
       {/* Main Login Card */}

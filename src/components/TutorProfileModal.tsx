@@ -15,7 +15,8 @@ import {
   GraduationCap,
   Sparkles,
   Eye,
-  EyeOff
+  EyeOff,
+  SwitchCamera
 } from 'lucide-react';
 import { Tutor } from '../types';
 import { saveTutor } from '../lib/storage';
@@ -50,8 +51,9 @@ export const TutorProfileModal: React.FC<TutorProfileModalProps> = ({
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Camera Selfie Mode
+  // Camera Mode (Front / Rear switch)
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
+  const [cameraFacingMode, setCameraFacingMode] = useState<'user' | 'environment'>('user');
   const [cameraError, setCameraError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -95,13 +97,20 @@ export const TutorProfileModal: React.FC<TutorProfileModalProps> = ({
     }
   };
 
-  const startCamera = async () => {
+  const startCamera = async (mode: 'user' | 'environment' = cameraFacingMode) => {
     setCameraError(null);
     setIsCameraActive(true);
+
+    if (videoRef.current && videoRef.current.srcObject) {
+      const s = videoRef.current.srcObject as MediaStream;
+      s.getTracks().forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { 
-          facingMode: 'user', // Front selfie camera
+          facingMode: { ideal: mode },
           width: { ideal: 640 }, 
           height: { ideal: 640 } 
         }
@@ -110,9 +119,25 @@ export const TutorProfileModal: React.FC<TutorProfileModalProps> = ({
         videoRef.current.srcObject = stream;
       }
     } catch (err) {
-      console.warn('Selfie camera note:', err);
-      setCameraError('Kamera selfie tidak dapat diakses. Silakan gunakan tombol Unggah Foto.');
-      setIsCameraActive(false);
+      console.warn('Camera note:', err);
+      // Fallback
+      try {
+        const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        if (videoRef.current) {
+          videoRef.current.srcObject = fallbackStream;
+        }
+      } catch (fallbackErr) {
+        setCameraError('Kamera tidak dapat diakses atau izin ditolak. Silakan gunakan tombol Pilih Foto.');
+        setIsCameraActive(false);
+      }
+    }
+  };
+
+  const toggleCameraFacingMode = async () => {
+    const nextMode = cameraFacingMode === 'user' ? 'environment' : 'user';
+    setCameraFacingMode(nextMode);
+    if (isCameraActive) {
+      await startCamera(nextMode);
     }
   };
 
@@ -136,10 +161,15 @@ export const TutorProfileModal: React.FC<TutorProfileModalProps> = ({
       // Center crop square
       const sx = ((videoRef.current.videoWidth || size) - size) / 2;
       const sy = ((videoRef.current.videoHeight || size) - size) / 2;
+      if (cameraFacingMode === 'user') {
+        // Mirror horizontally for front selfie
+        ctx.translate(size, 0);
+        ctx.scale(-1, 1);
+      }
       ctx.drawImage(videoRef.current, sx, sy, size, size, 0, 0, size, size);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
       setAvatarUrl(dataUrl);
-      setSuccessMsg('Foto selfie berhasil diambil! Jangan lupa klik "Simpan Perubahan".');
+      setSuccessMsg('Foto profil berhasil diambil! Jangan lupa klik "Simpan Perubahan".');
       setTimeout(() => setSuccessMsg(null), 4000);
     }
     stopCamera();
@@ -362,18 +392,31 @@ export const TutorProfileModal: React.FC<TutorProfileModalProps> = ({
             {/* Live Camera Feed */}
             {isCameraActive && (
               <div className="p-4 bg-slate-900 rounded-2xl text-white space-y-3 animate-in fade-in duration-200 border-2 border-emerald-400/60">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
-                    <span className="font-extrabold text-xs text-emerald-300">Kamera Selfie Aktif</span>
+                    <span className="font-extrabold text-xs text-emerald-300">
+                      {cameraFacingMode === 'user' ? '📷 Kamera Depan (Selfie)' : '📷 Kamera Belakang'}
+                    </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={stopCamera}
-                    className="text-xs text-slate-400 hover:text-white font-bold"
-                  >
-                    Batal / Tutup
-                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={toggleCameraFacingMode}
+                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold border border-amber-400/40 flex items-center gap-1 transition"
+                    >
+                      <SwitchCamera className="w-3.5 h-3.5" />
+                      <span>{cameraFacingMode === 'user' ? 'Ganti ke Kamera Belakang' : 'Ganti ke Kamera Depan'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={stopCamera}
+                      className="text-xs text-slate-400 hover:text-white font-bold"
+                    >
+                      Tutup
+                    </button>
+                  </div>
                 </div>
 
                 <div className="relative max-w-sm mx-auto aspect-square rounded-2xl overflow-hidden bg-black border-2 border-white/20 shadow-inner">
@@ -382,7 +425,9 @@ export const TutorProfileModal: React.FC<TutorProfileModalProps> = ({
                     autoPlay
                     playsInline
                     muted
-                    className="w-full h-full object-cover transform scale-x-[-1]"
+                    className={`w-full h-full object-cover transition duration-300 ${
+                      cameraFacingMode === 'user' ? 'scale-x-[-1]' : ''
+                    }`}
                   />
                   <div className="absolute inset-0 border-2 border-white/30 rounded-full m-8 pointer-events-none border-dashed" />
                 </div>

@@ -28,6 +28,8 @@ import {
 import { PKBM_CONFIG } from './data/mockData';
 import { getWibToday } from './lib/dateUtils';
 import { Shield, RefreshCw, School, MapPin, Database, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { PWAInstallFloatingBanner } from './components/PWAInstallComponents';
+import { OfflineIndicator } from './components/OfflineIndicator';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
@@ -354,6 +356,10 @@ export default function App() {
 
         </div>
       </footer>
+
+      {/* PWA Install Banner & Offline Alert */}
+      <PWAInstallFloatingBanner />
+      <OfflineIndicator />
 
     </div>
   );

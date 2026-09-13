@@ -22,7 +22,9 @@ import {
   Briefcase,
   Check,
   Eye,
-  AlertTriangle
+  AlertTriangle,
+  SwitchCamera,
+  X
 } from 'lucide-react';
 import { Tutor, ProgramType, GeoLocationData, AttendanceRecord, UserSession, ClassLocation } from '../types';
 import { PKBM_CONFIG, INITIAL_CLASS_LOCATIONS } from '../data/mockData';
@@ -97,6 +99,8 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
   // Camera & Photo State
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
+  const [cameraFacingMode, setCameraFacingMode] = useState<'environment' | 'user'>('environment');
+  const [isSwitchingCamera, setIsSwitchingCamera] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -289,22 +293,57 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
     );
   };
 
-  // WebCam Handler
-  const startCamera = async () => {
+  // WebCam Handler (Front & Rear camera switcher)
+  const startCamera = async (mode: 'environment' | 'user' = cameraFacingMode) => {
     setIsCameraActive(true);
     setCameraError(null);
+
+    // Stop previous stream tracks if any
+    if (videoRef.current && videoRef.current.srcObject) {
+      const currentStream = videoRef.current.srcObject as MediaStream;
+      currentStream.getTracks().forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+        video: { 
+          facingMode: { ideal: mode }, 
+          width: { ideal: 1280 }, 
+          height: { ideal: 720 } 
+        }
       });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
     } catch (err) {
-      console.warn("Camera access note:", err);
-      setCameraError("Kamera tidak dapat diakses. Silakan gunakan opsi Unggah Berkas Foto.");
-      setIsCameraActive(false);
+      console.warn("Camera with facingMode failed, attempting fallback:", err);
+      // Fallback to any available video camera
+      try {
+        const fallbackStream = await navigator.mediaDevices.getUserMedia({
+          video: true
+        });
+        if (videoRef.current) {
+          videoRef.current.srcObject = fallbackStream;
+        }
+      } catch (fallbackErr) {
+        console.warn("Camera fallback error:", fallbackErr);
+        setCameraError("Kamera tidak dapat diakses atau izin ditolak. Silakan berikan izin akses kamera pada browser atau gunakan opsi Unggah Galeri.");
+        setIsCameraActive(false);
+      }
     }
+  };
+
+  const toggleCameraFacingMode = async () => {
+    if (isSwitchingCamera) return;
+    setIsSwitchingCamera(true);
+    const nextMode = cameraFacingMode === 'environment' ? 'user' : 'environment';
+    setCameraFacingMode(nextMode);
+
+    if (isCameraActive) {
+      await startCamera(nextMode);
+    }
+    setIsSwitchingCamera(false);
   };
 
   const stopCamera = () => {
@@ -319,11 +358,18 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
   const capturePhoto = () => {
     if (!videoRef.current) return;
     const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth || 800;
-    canvas.height = videoRef.current.videoHeight || 600;
+    const vw = videoRef.current.videoWidth || 800;
+    const vh = videoRef.current.videoHeight || 600;
+    canvas.width = vw;
+    canvas.height = vh;
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+      if (cameraFacingMode === 'user') {
+        // Mirror horizontally so front selfie photo is not reversed
+        ctx.translate(vw, 0);
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(videoRef.current, 0, 0, vw, vh);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
       setPhotoDataUrl(dataUrl);
     }
@@ -999,30 +1045,69 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
             </div>
 
             {/* Photo Preview or Live Camera Box */}
-            <div className="relative rounded-2xl overflow-hidden bg-slate-900 border-2 border-dashed border-slate-300 min-h-[200px] flex flex-col items-center justify-center text-center p-3">
+            <div className="relative rounded-2xl overflow-hidden bg-slate-900 border-2 border-dashed border-slate-300 min-h-[220px] flex flex-col items-center justify-center text-center p-3">
               {isCameraActive ? (
-                <div className="relative w-full h-56 bg-black flex items-center justify-center">
+                <div className="relative w-full h-72 sm:h-80 bg-black flex items-center justify-center rounded-xl overflow-hidden shadow-inner">
                   <video
                     ref={videoRef}
                     autoPlay
                     playsInline
-                    className="w-full h-full object-cover rounded-xl"
+                    muted
+                    className={`w-full h-full object-cover rounded-xl transition-all duration-300 ${
+                      cameraFacingMode === 'user' ? 'scale-x-[-1]' : ''
+                    }`}
                   />
-                  <button
-                    type="button"
-                    onClick={capturePhoto}
-                    className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-black text-xs px-5 py-2.5 rounded-full shadow-xl border-2 border-white flex items-center gap-2 active:scale-95 transition-all"
-                  >
-                    <Camera className="w-4 h-4 text-amber-300" />
-                    Ambil Foto Sekarang
-                  </button>
+
+                  {/* Top Bar inside Camera View: Mode Indicator & Controls */}
+                  <div className="absolute top-3 left-3 right-3 flex items-center justify-between z-20 pointer-events-none">
+                    <span className="pointer-events-auto px-3 py-1.5 rounded-full text-[11px] font-black bg-slate-950/80 text-white backdrop-blur border border-white/25 flex items-center gap-1.5 shadow-md">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                      <span>{cameraFacingMode === 'environment' ? '📷 Kamera Belakang' : '🤳 Kamera Depan (Selfie)'}</span>
+                    </span>
+
+                    <div className="flex items-center gap-2 pointer-events-auto">
+                      {/* Switch Camera Button */}
+                      <button
+                        type="button"
+                        onClick={toggleCameraFacingMode}
+                        disabled={isSwitchingCamera}
+                        title="Ubah Mode Kamera Depan / Belakang"
+                        className="px-3 py-1.5 rounded-full bg-slate-950/80 hover:bg-slate-900 active:scale-95 text-white backdrop-blur border border-amber-400 shadow-md text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <SwitchCamera className={`w-4 h-4 text-amber-300 ${isSwitchingCamera ? 'animate-spin' : ''}`} />
+                        <span>{cameraFacingMode === 'environment' ? 'Kamera Depan' : 'Kamera Belakang'}</span>
+                      </button>
+
+                      {/* Close Camera Button */}
+                      <button
+                        type="button"
+                        onClick={stopCamera}
+                        title="Tutup Kamera"
+                        className="p-1.5 rounded-full bg-slate-950/80 hover:bg-rose-950 text-white backdrop-blur border border-white/20 transition-all cursor-pointer"
+                      >
+                        <X className="w-4 h-4 text-rose-300" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Bottom Action Bar: Shutter */}
+                  <div className="absolute bottom-3 left-0 right-0 px-4 flex items-center justify-center z-20">
+                    <button
+                      type="button"
+                      onClick={capturePhoto}
+                      className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-black text-xs sm:text-sm px-6 py-3 rounded-full shadow-2xl border-2 border-white flex items-center gap-2 active:scale-95 transition-all cursor-pointer"
+                    >
+                      <Camera className="w-4 h-4 text-amber-300" />
+                      <span>Ambil Foto Sekarang</span>
+                    </button>
+                  </div>
                 </div>
               ) : photoDataUrl ? (
                 <div className="relative w-full group">
                   <img
                     src={photoDataUrl}
                     alt="Bukti Presensi Kegiatan"
-                    className="w-full h-56 object-cover rounded-xl border border-slate-700"
+                    className="w-full h-56 sm:h-64 object-cover rounded-xl border border-slate-700 shadow"
                   />
                   
                   {/* Stamped Watermark Badge on Preview */}
@@ -1035,9 +1120,9 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
                   <button
                     type="button"
                     onClick={() => setPhotoDataUrl(null)}
-                    className="absolute top-2 right-2 bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-black px-3 py-1.5 rounded-xl shadow-lg transition-all"
+                    className="absolute top-2 right-2 bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-black px-3 py-1.5 rounded-xl shadow-lg transition-all cursor-pointer"
                   >
-                    Hapus / Ganti
+                    Hapus / Ambil Ulang
                   </button>
                 </div>
               ) : (
@@ -1047,26 +1132,36 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
                   </div>
                   <div>
                     <p className="text-xs font-black text-white">Lampirkan Foto Kegiatan Pembelajaran</p>
-                    <p className="text-[11px] text-slate-300 mt-0.5">Format JPG / PNG (Maksimal 10 MB)</p>
+                    <p className="text-[11px] text-slate-300 mt-0.5">Mendukung kamera belakang, kamera depan (selfie), & galeri</p>
                   </div>
 
                   <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
                     <button
                       type="button"
-                      onClick={startCamera}
-                      className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-extrabold px-3.5 py-2.5 rounded-xl shadow-md flex items-center gap-1.5 transition-all active:scale-95"
+                      onClick={() => startCamera(cameraFacingMode)}
+                      className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-extrabold px-4 py-2.5 rounded-xl shadow-md flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
                     >
                       <Camera className="w-4 h-4 text-amber-300" />
-                      Kamera
+                      <span>Buka Kamera ({cameraFacingMode === 'environment' ? 'Belakang' : 'Depan'})</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={toggleCameraFacingMode}
+                      title="Ganti Mode Kamera Sebelum Membuka"
+                      className="bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-bold px-3 py-2.5 rounded-xl border border-slate-700 flex items-center gap-1.5 transition-all cursor-pointer"
+                    >
+                      <SwitchCamera className="w-4 h-4 text-amber-400" />
+                      <span>{cameraFacingMode === 'environment' ? 'Mode: Belakang' : 'Mode: Depan'}</span>
                     </button>
 
                     <label className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold px-3.5 py-2.5 rounded-xl cursor-pointer border border-slate-700 flex items-center gap-1.5 transition-all active:scale-95">
                       <Upload className="w-4 h-4 text-emerald-400" />
-                      Galeri
+                      <span>Galeri</span>
                       <input
                         type="file"
                         accept="image/*"
-                        capture="environment"
+                        capture={cameraFacingMode}
                         onChange={handleFileUpload}
                         className="hidden"
                       />
