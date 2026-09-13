@@ -1,11 +1,7 @@
-<?xml version="1.0" standalone="no"?>
-<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 20010904//EN"
- "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">
-<svg version="1.0" xmlns="http://www.w3.org/2000/svg"
- width="1508.000000pt" height="1669.000000pt" viewBox="0 0 1508.000000 1669.000000"
- preserveAspectRatio="xMidYMid meet">
-
-<g transform="translate(0.000000,1669.000000) scale(0.100000,-0.100000)"
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="105" fill="#ffffff"/>
+  <svg x="70.95602156980226" y="51.19999999999999" width="370.0879568603955" height="409.6" viewBox="0 0 1508 1669" preserveAspectRatio="xMidYMid meet">
+    <g transform="translate(0.000000,1669.000000) scale(0.100000,-0.100000)"
 fill="#000000" stroke="none">
 <path d="M9070 16664 c-8 -2 -118 -22 -245 -44 -1617 -287 -2892 -780 -3809
 -1473 -210 -159 -356 -286 -557 -487 -410 -409 -700 -810 -968 -1340 -164
@@ -132,4 +128,6 @@ l0 -803 140 0 140 0 0 793 c0 883 -4 836 69 884 69 46 165 19 203 -57 17 -32
 -307 316 -516 258z"/>
 <path d="M14420 990 l0 -990 140 0 140 0 0 990 0 990 -140 0 -140 0 0 -990z"/>
 </g>
+
+  </svg>
 </svg>

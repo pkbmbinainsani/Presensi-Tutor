@@ -11,7 +11,17 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['favicon.svg', 'logo.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png'],
+        includeAssets: [
+          'favicon.ico',
+          'favicon.svg',
+          'favicon-32x32.png',
+          'favicon-16x16.png',
+          'logo.svg',
+          'apple-touch-icon.png',
+          'pwa-192x192.png',
+          'pwa-512x512.png',
+          'pwa-maskable-512x512.png'
+        ],
         manifest: {
           id: '/',
           name: 'Absensi Tutor PKBM Bina Insani',

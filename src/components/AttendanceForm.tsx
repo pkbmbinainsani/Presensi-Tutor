@@ -336,6 +336,9 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
       });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.onloadedmetadata = () => {
+          updateCameraOrientationFromVideo();
+        };
       }
     } catch (err) {
       console.warn("Camera with facingMode failed, attempting fallback:", err);
@@ -346,6 +349,9 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
         });
         if (videoRef.current) {
           videoRef.current.srcObject = fallbackStream;
+          videoRef.current.onloadedmetadata = () => {
+            updateCameraOrientationFromVideo();
+          };
         }
       } catch (fallbackErr) {
         console.warn("Camera fallback error:", fallbackErr);
@@ -450,17 +456,21 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
         const mapelText = `${subjectTitle || 'Kegiatan Pembelajaran'} • ${classGroup || 'Kelompok Belajar'}`;
         ctx.fillText(mapelText, textX, vh - bannerHeight + Math.round(94 * scale));
 
+        const currentTimeWib = getWibTimeWithSuffix(new Date(), false);
+
         ctx.fillStyle = '#fbbf24'; // amber-400
         ctx.font = `bold ${Math.round(15 * scale)}px sans-serif`;
-        const timeStr = `📅 ${formatWibDateIndo(date, 'withDay')} • ⏰ ${timeStart} - ${timeEnd} WIB`;
+        const timeStr = `📅 ${formatWibDateIndo(date, 'withDay')} • ⏰ ${currentTimeWib} WIB`;
         ctx.fillText(timeStr, textX, vh - bannerHeight + Math.round(122 * scale));
 
         ctx.fillStyle = '#93c5fd'; // blue-300
         ctx.font = `${Math.round(13.5 * scale)}px monospace`;
-        const gpsStr = `📍 Lat: ${geoLocation ? geoLocation.latitude.toFixed(5) : '-'}, Lng: ${geoLocation ? geoLocation.longitude.toFixed(5) : '-'} (±${geoLocation?.accuracy || 0}m) • ${isWithinGeofence ? 'Radius Valid' : dutyType === 'Dinas Luar' ? 'Dinas Luar' : 'Luar Radius'}`;
+        const gpsStr = `📍 Lat: ${geoLocation ? geoLocation.latitude.toFixed(5) : '-'}, Lng: ${geoLocation ? geoLocation.longitude.toFixed(5) : '-'} (±${geoLocation?.accuracy || 0}m) • ${geoLocation?.isWithinRadius ? 'Radius Valid' : dutyType === 'Dinas Luar' ? 'Dinas Luar' : 'Luar Radius'}`;
         ctx.fillText(gpsStr, textX, vh - bannerHeight + Math.round(148 * scale));
       } else {
         // --- LANDSCAPE ORIENTATION WATERMARK (Two Columns) ---
+        const currentTimeWib = getWibTimeWithSuffix(new Date(), false);
+
         // Left Column
         ctx.fillStyle = '#34d399';
         ctx.font = `bold ${Math.round(17 * scale)}px sans-serif`;
@@ -480,7 +490,7 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
         const rightColX = Math.round(vw * 0.54);
         ctx.fillStyle = '#fbbf24';
         ctx.font = `bold ${Math.round(16 * scale)}px sans-serif`;
-        const timeStr = `📅 ${formatWibDateIndo(date, 'short')} • ⏰ ${timeStart} - ${timeEnd} WIB`;
+        const timeStr = `📅 ${formatWibDateIndo(date, 'short')} • ⏰ ${currentTimeWib} WIB`;
         ctx.fillText(timeStr, rightColX, vh - bannerHeight + Math.round(40 * scale));
 
         ctx.fillStyle = '#93c5fd';
@@ -490,7 +500,7 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
 
         ctx.fillStyle = '#a7f3d0';
         ctx.font = `bold ${Math.round(14 * scale)}px sans-serif`;
-        const locName = `🏢 ${matchedLocation?.name || 'Titik PKBM'} • ${isWithinGeofence ? 'Radius Sesuai' : dutyType === 'Dinas Luar' ? 'Dinas Luar' : 'Luar Radius'}`;
+        const locName = `🏢 ${geoLocation?.matchedLocationName || 'Titik PKBM'} • ${geoLocation?.isWithinRadius ? 'Radius Sesuai' : dutyType === 'Dinas Luar' ? 'Dinas Luar' : 'Luar Radius'}`;
         ctx.fillText(locName, rightColX, vh - bannerHeight + Math.round(96 * scale));
       }
 
@@ -1184,35 +1194,85 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
             {/* Photo Preview or Live Camera Box */}
             <div className="relative rounded-2xl overflow-hidden bg-slate-900 border-2 border-dashed border-slate-300 min-h-[220px] flex flex-col items-center justify-center text-center p-3">
               {isCameraActive ? (
-                <div className="relative w-full h-72 sm:h-80 bg-black flex items-center justify-center rounded-xl overflow-hidden shadow-inner">
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    className={`w-full h-full object-cover rounded-xl transition-all duration-300 ${
-                      cameraFacingMode === 'user' ? 'scale-x-[-1]' : ''
-                    }`}
-                  />
+                <div className={`${
+                  isFullScreenCamera 
+                    ? 'fixed inset-0 z-50 bg-black/95 flex flex-col justify-between p-3 sm:p-5 backdrop-blur-md animate-in fade-in duration-200' 
+                    : 'relative w-full bg-slate-950 flex flex-col items-center justify-center rounded-2xl overflow-hidden shadow-inner min-h-[320px] max-h-[75vh]'
+                }`}>
+                  {/* Video Viewfinder - object-contain ensures ZERO cropping so full wide-angle sensor view is captured */}
+                  <div className="relative w-full h-full flex-1 flex items-center justify-center overflow-hidden">
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      onLoadedMetadata={updateCameraOrientationFromVideo}
+                      onCanPlay={updateCameraOrientationFromVideo}
+                      className={`max-w-full max-h-full object-contain rounded-xl transition-all duration-300 ${
+                        cameraFacingMode === 'user' ? 'scale-x-[-1]' : ''
+                      }`}
+                    />
+                  </div>
 
-                  {/* Top Bar inside Camera View: Mode Indicator & Controls */}
-                  <div className="absolute top-3 left-3 right-3 flex items-center justify-between z-20 pointer-events-none">
-                    <span className="pointer-events-auto px-3 py-1.5 rounded-full text-[11px] font-black bg-slate-950/80 text-white backdrop-blur border border-white/25 flex items-center gap-1.5 shadow-md">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
-                      <span>{cameraFacingMode === 'environment' ? '📷 Kamera Belakang' : '🤳 Kamera Depan (Selfie)'}</span>
-                    </span>
+                  {/* Top Bar inside Camera View: Mode Indicator, Orientation & Controls */}
+                  <div className="absolute top-3 left-3 right-3 flex items-center justify-between z-30 pointer-events-none gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5 pointer-events-auto flex-wrap">
+                      <span className="px-2.5 py-1 rounded-full text-[10px] sm:text-[11px] font-black bg-slate-950/85 text-white backdrop-blur border border-white/25 flex items-center gap-1.5 shadow-md">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                        <span>{cameraFacingMode === 'environment' ? '📷 Kamera Belakang' : '🤳 Kamera Depan (Selfie)'}</span>
+                      </span>
 
-                    <div className="flex items-center gap-2 pointer-events-auto">
+                      {/* Orientation Indicator */}
+                      <span className={`px-2.5 py-1 rounded-full text-[10px] sm:text-[11px] font-black backdrop-blur border flex items-center gap-1 shadow-md ${
+                        cameraOrientation === 'landscape'
+                          ? 'bg-amber-950/85 text-amber-300 border-amber-400/50'
+                          : 'bg-blue-950/85 text-blue-300 border-blue-400/50'
+                      }`}>
+                        {cameraOrientation === 'landscape' ? (
+                          <>
+                            <Monitor className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                            <span>Mode Lanskap (Luas) {cameraResolution ? `• ${cameraResolution.width}×${cameraResolution.height}` : ''}</span>
+                          </>
+                        ) : (
+                          <>
+                            <Smartphone className="w-3.5 h-3.5 text-blue-300 shrink-0" />
+                            <span>Mode Potret (Tegak) {cameraResolution ? `• ${cameraResolution.width}×${cameraResolution.height}` : ''}</span>
+                          </>
+                        )}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 pointer-events-auto">
+                      {/* Toggle Full Screen Camera */}
+                      <button
+                        type="button"
+                        onClick={() => setIsFullScreenCamera(!isFullScreenCamera)}
+                        title={isFullScreenCamera ? "Kecilkan Kamera" : "Mode Layar Penuh Kamera Luas"}
+                        className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-full bg-slate-950/85 hover:bg-slate-900 active:scale-95 text-white backdrop-blur border border-slate-600 shadow-md text-xs font-bold flex items-center gap-1 transition-all cursor-pointer"
+                      >
+                        {isFullScreenCamera ? (
+                          <>
+                            <Minimize2 className="w-4 h-4 text-slate-200" />
+                            <span className="hidden sm:inline">Kecilkan</span>
+                          </>
+                        ) : (
+                          <>
+                            <Maximize2 className="w-4 h-4 text-emerald-300" />
+                            <span className="hidden sm:inline">Layar Penuh</span>
+                          </>
+                        )}
+                      </button>
+
                       {/* Switch Camera Button */}
                       <button
                         type="button"
                         onClick={toggleCameraFacingMode}
                         disabled={isSwitchingCamera}
                         title="Ubah Mode Kamera Depan / Belakang"
-                        className="px-3 py-1.5 rounded-full bg-slate-950/80 hover:bg-slate-900 active:scale-95 text-white backdrop-blur border border-amber-400 shadow-md text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer"
+                        className="px-2.5 py-1.5 rounded-full bg-slate-950/85 hover:bg-slate-900 active:scale-95 text-white backdrop-blur border border-amber-400 shadow-md text-xs font-black flex items-center gap-1 transition-all cursor-pointer"
                       >
                         <SwitchCamera className={`w-4 h-4 text-amber-300 ${isSwitchingCamera ? 'animate-spin' : ''}`} />
-                        <span>{cameraFacingMode === 'environment' ? 'Kamera Depan' : 'Kamera Belakang'}</span>
+                        <span className="hidden sm:inline">{cameraFacingMode === 'environment' ? 'Kamera Depan' : 'Kamera Belakang'}</span>
                       </button>
 
                       {/* Close Camera Button */}
@@ -1220,47 +1280,71 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
                         type="button"
                         onClick={stopCamera}
                         title="Tutup Kamera"
-                        className="p-1.5 rounded-full bg-slate-950/80 hover:bg-rose-950 text-white backdrop-blur border border-white/20 transition-all cursor-pointer"
+                        className="p-1.5 rounded-full bg-slate-950/85 hover:bg-rose-950 text-white backdrop-blur border border-rose-400/50 transition-all cursor-pointer"
                       >
                         <X className="w-4 h-4 text-rose-300" />
                       </button>
                     </div>
                   </div>
 
-                  {/* Bottom Action Bar: Shutter */}
-                  <div className="absolute bottom-3 left-0 right-0 px-4 flex items-center justify-center z-20">
+                  {/* Bottom Action Bar: Shutter & Guide */}
+                  <div className="absolute bottom-3 left-0 right-0 px-4 flex flex-col items-center justify-center gap-1.5 z-30">
+                    <p className="text-[10px] text-slate-300 bg-slate-950/70 backdrop-blur px-3 py-1 rounded-full border border-white/15">
+                      💡 Putar HP untuk beralih otomatis antara mode Potret (Tegak) &amp; Lanskap (Pemandangan Luas)
+                    </p>
                     <button
                       type="button"
                       onClick={capturePhoto}
-                      className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-black text-xs sm:text-sm px-6 py-3 rounded-full shadow-2xl border-2 border-white flex items-center gap-2 active:scale-95 transition-all cursor-pointer"
+                      className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs sm:text-sm px-6 py-2.5 sm:py-3 rounded-full shadow-2xl border-2 border-white flex items-center gap-2 active:scale-95 transition-all cursor-pointer"
                     >
                       <Camera className="w-4 h-4 text-amber-300" />
-                      <span>Ambil Foto Sekarang</span>
+                      <span>Ambil Foto Full ({cameraOrientation === 'landscape' ? 'Lanskap' : 'Potret'})</span>
                     </button>
                   </div>
                 </div>
               ) : photoDataUrl ? (
-                <div className="relative w-full group">
+                <div className="relative w-full group flex flex-col items-center justify-center bg-slate-950 rounded-2xl overflow-hidden border border-slate-800">
                   <img
                     src={photoDataUrl}
                     alt="Bukti Presensi Kegiatan"
-                    className="w-full h-56 sm:h-64 object-cover rounded-xl border border-slate-700 shadow"
+                    className="w-auto max-w-full max-h-[380px] object-contain rounded-xl shadow-lg transition-all"
                   />
                   
+                  {/* Top Bar on Preview: Orientation Tag & Action buttons */}
+                  <div className="absolute top-2 left-2 right-2 flex items-center justify-between pointer-events-none">
+                    <span className={`pointer-events-auto px-2.5 py-1 rounded-full text-[10px] font-black border backdrop-blur-md flex items-center gap-1 shadow-md ${
+                      photoOrientation === 'landscape'
+                        ? 'bg-amber-950/90 text-amber-300 border-amber-400/50'
+                        : 'bg-blue-950/90 text-blue-300 border-blue-400/50'
+                    }`}>
+                      {photoOrientation === 'landscape' ? (
+                        <>
+                          <Monitor className="w-3 h-3 text-amber-300" />
+                          <span>Lanskap Luas {photoResolution ? `• ${photoResolution.width}×${photoResolution.height}` : ''}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Smartphone className="w-3 h-3 text-blue-300" />
+                          <span>Potret Tegak {photoResolution ? `• ${photoResolution.width}×${photoResolution.height}` : ''}</span>
+                        </>
+                      )}
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={() => setPhotoDataUrl(null)}
+                      className="pointer-events-auto bg-rose-600/90 hover:bg-rose-700 text-white text-[11px] font-black px-3 py-1 rounded-xl shadow-lg transition-all cursor-pointer border border-rose-400/30"
+                    >
+                      Hapus / Ambil Ulang
+                    </button>
+                  </div>
+
                   {/* Stamped Watermark Badge on Preview */}
                   <div className="absolute bottom-2 left-2 right-2 bg-slate-950/85 backdrop-blur-md text-white p-2.5 rounded-xl text-[10px] text-left border border-white/20 shadow-lg">
                     <p className="font-black text-emerald-400">PKBM BINA INSANI SUMOWONO</p>
-                    <p className="truncate font-semibold text-slate-200">{selectedTutorObj?.name || 'Tutor'}</p>
-                    <p className="text-amber-300 font-bold">{date} • Real-time GPS Watermark</p>
+                    <p className="truncate font-semibold text-slate-200">{selectedTutorObj?.name || 'Tutor'} • {program}</p>
+                    <p className="text-amber-300 font-bold">{formatWibDateIndo(date, 'short')} • Real-time GPS Watermark</p>
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setPhotoDataUrl(null)}
-                    className="absolute top-2 right-2 bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-black px-3 py-1.5 rounded-xl shadow-lg transition-all cursor-pointer"
-                  >
-                    Hapus / Ambil Ulang
-                  </button>
                 </div>
               ) : (
                 <div className="py-6 px-4 space-y-3">
