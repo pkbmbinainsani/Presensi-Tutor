@@ -24,7 +24,11 @@ import {
   Eye,
   AlertTriangle,
   SwitchCamera,
-  X
+  X,
+  Smartphone,
+  Monitor,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { Tutor, ProgramType, GeoLocationData, AttendanceRecord, UserSession, ClassLocation } from '../types';
 import { PKBM_CONFIG, INITIAL_CLASS_LOCATIONS } from '../data/mockData';
@@ -96,12 +100,17 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
     }
   }, [currentUser]);
 
-  // Camera & Photo State
+  // Camera & Photo State (Full View & Auto Portrait/Landscape Orientation)
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [cameraFacingMode, setCameraFacingMode] = useState<'environment' | 'user'>('environment');
   const [isSwitchingCamera, setIsSwitchingCamera] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraOrientation, setCameraOrientation] = useState<'portrait' | 'landscape'>('portrait');
+  const [cameraResolution, setCameraResolution] = useState<{ width: number; height: number } | null>(null);
+  const [photoOrientation, setPhotoOrientation] = useState<'portrait' | 'landscape'>('portrait');
+  const [photoResolution, setPhotoResolution] = useState<{ width: number; height: number } | null>(null);
+  const [isFullScreenCamera, setIsFullScreenCamera] = useState<boolean>(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   // GPS Location State
@@ -293,7 +302,18 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
     );
   };
 
-  // WebCam Handler (Front & Rear camera switcher)
+  // WebCam Handler (Front & Rear camera switcher with Full Sensor Angle & Auto Orientation)
+  const updateCameraOrientationFromVideo = () => {
+    if (!videoRef.current) return;
+    const vw = videoRef.current.videoWidth || 0;
+    const vh = videoRef.current.videoHeight || 0;
+    if (vw > 0 && vh > 0) {
+      const isPort = vh > vw;
+      setCameraOrientation(isPort ? 'portrait' : 'landscape');
+      setCameraResolution({ width: vw, height: vh });
+    }
+  };
+
   const startCamera = async (mode: 'environment' | 'user' = cameraFacingMode) => {
     setIsCameraActive(true);
     setCameraError(null);
@@ -306,11 +326,12 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
     }
 
     try {
+      // Request highest full sensor resolution without restrictive aspect ratio so wide-angle is fully captured
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { 
           facingMode: { ideal: mode }, 
-          width: { ideal: 1280 }, 
-          height: { ideal: 720 } 
+          width: { ideal: 1920, max: 3840 }, 
+          height: { ideal: 1080, max: 2160 } 
         }
       });
       if (videoRef.current) {
@@ -334,6 +355,21 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
     }
   };
 
+  // Re-check orientation when device orientation or window resize occurs
+  useEffect(() => {
+    const handleDeviceOrientationChange = () => {
+      if (isCameraActive && videoRef.current) {
+        updateCameraOrientationFromVideo();
+      }
+    };
+    window.addEventListener('resize', handleDeviceOrientationChange);
+    window.addEventListener('orientationchange', handleDeviceOrientationChange);
+    return () => {
+      window.removeEventListener('resize', handleDeviceOrientationChange);
+      window.removeEventListener('orientationchange', handleDeviceOrientationChange);
+    };
+  }, [isCameraActive]);
+
   const toggleCameraFacingMode = async () => {
     if (isSwitchingCamera) return;
     setIsSwitchingCamera(true);
@@ -353,36 +389,137 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
       videoRef.current.srcObject = null;
     }
     setIsCameraActive(false);
+    setIsFullScreenCamera(false);
   };
 
   const capturePhoto = () => {
     if (!videoRef.current) return;
+    const vw = videoRef.current.videoWidth || 1280;
+    const vh = videoRef.current.videoHeight || 720;
+    const isPort = vh > vw;
+
     const canvas = document.createElement('canvas');
-    const vw = videoRef.current.videoWidth || 800;
-    const vh = videoRef.current.videoHeight || 600;
     canvas.width = vw;
     canvas.height = vh;
     const ctx = canvas.getContext('2d');
     if (ctx) {
+      // 1. Draw raw camera frame (mirror if front camera)
       if (cameraFacingMode === 'user') {
-        // Mirror horizontally so front selfie photo is not reversed
         ctx.translate(vw, 0);
         ctx.scale(-1, 1);
       }
       ctx.drawImage(videoRef.current, 0, 0, vw, vh);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+
+      // Reset transformation matrix for watermark stamp
+      if (cameraFacingMode === 'user') {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+      }
+
+      // 2. High-resolution stamped watermark matching orientation
+      const scale = vw / 1000;
+      const bannerHeight = isPort ? Math.round(180 * scale) : Math.round(135 * scale);
+
+      // Dark gradient banner at the bottom
+      const gradient = ctx.createLinearGradient(0, vh - bannerHeight - 40, 0, vh);
+      gradient.addColorStop(0, 'rgba(2, 6, 23, 0)');
+      gradient.addColorStop(0.25, 'rgba(2, 6, 23, 0.82)');
+      gradient.addColorStop(1, 'rgba(2, 6, 23, 0.98)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, vh - bannerHeight - 40, vw, bannerHeight + 40);
+
+      // Emerald accent indicator
+      const paddingLeft = Math.round(24 * scale);
+      ctx.fillStyle = '#10b981'; // emerald-500
+      ctx.fillRect(paddingLeft, vh - bannerHeight + Math.round(12 * scale), Math.round(6 * scale), bannerHeight - Math.round(30 * scale));
+
+      const textX = paddingLeft + Math.round(18 * scale);
+
+      if (isPort) {
+        // --- PORTRAIT ORIENTATION WATERMARK (Stacked Lines) ---
+        ctx.fillStyle = '#34d399'; // emerald-400
+        ctx.font = `bold ${Math.round(18 * scale)}px sans-serif`;
+        ctx.fillText('PKBM BINA INSANI SUMOWONO • VERIFIED GPS', textX, vh - bannerHeight + Math.round(32 * scale));
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `bold ${Math.round(22 * scale)}px sans-serif`;
+        const tutorTitle = `${selectedTutorObj?.name || 'Tutor'} • ${program || 'Pendidikan Kesetaraan'}`;
+        ctx.fillText(tutorTitle, textX, vh - bannerHeight + Math.round(64 * scale));
+
+        ctx.fillStyle = '#cbd5e1'; // slate-300
+        ctx.font = `600 ${Math.round(16 * scale)}px sans-serif`;
+        const mapelText = `${subjectTitle || 'Kegiatan Pembelajaran'} • ${classGroup || 'Kelompok Belajar'}`;
+        ctx.fillText(mapelText, textX, vh - bannerHeight + Math.round(94 * scale));
+
+        ctx.fillStyle = '#fbbf24'; // amber-400
+        ctx.font = `bold ${Math.round(15 * scale)}px sans-serif`;
+        const timeStr = `📅 ${formatWibDateIndo(date, 'withDay')} • ⏰ ${timeStart} - ${timeEnd} WIB`;
+        ctx.fillText(timeStr, textX, vh - bannerHeight + Math.round(122 * scale));
+
+        ctx.fillStyle = '#93c5fd'; // blue-300
+        ctx.font = `${Math.round(13.5 * scale)}px monospace`;
+        const gpsStr = `📍 Lat: ${geoLocation ? geoLocation.latitude.toFixed(5) : '-'}, Lng: ${geoLocation ? geoLocation.longitude.toFixed(5) : '-'} (±${geoLocation?.accuracy || 0}m) • ${isWithinGeofence ? 'Radius Valid' : dutyType === 'Dinas Luar' ? 'Dinas Luar' : 'Luar Radius'}`;
+        ctx.fillText(gpsStr, textX, vh - bannerHeight + Math.round(148 * scale));
+      } else {
+        // --- LANDSCAPE ORIENTATION WATERMARK (Two Columns) ---
+        // Left Column
+        ctx.fillStyle = '#34d399';
+        ctx.font = `bold ${Math.round(17 * scale)}px sans-serif`;
+        ctx.fillText('PKBM BINA INSANI SUMOWONO • VERIFIED GPS', textX, vh - bannerHeight + Math.round(32 * scale));
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `bold ${Math.round(22 * scale)}px sans-serif`;
+        const tutorTitle = `${selectedTutorObj?.name || 'Tutor'} • ${program || 'Pendidikan Kesetaraan'}`;
+        ctx.fillText(tutorTitle, textX, vh - bannerHeight + Math.round(65 * scale));
+
+        ctx.fillStyle = '#cbd5e1';
+        ctx.font = `600 ${Math.round(16 * scale)}px sans-serif`;
+        const mapelText = `${subjectTitle || 'Kegiatan Pembelajaran'} • ${classGroup || 'Kelompok Belajar'}`;
+        ctx.fillText(mapelText, textX, vh - bannerHeight + Math.round(96 * scale));
+
+        // Right Column
+        const rightColX = Math.round(vw * 0.54);
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = `bold ${Math.round(16 * scale)}px sans-serif`;
+        const timeStr = `📅 ${formatWibDateIndo(date, 'short')} • ⏰ ${timeStart} - ${timeEnd} WIB`;
+        ctx.fillText(timeStr, rightColX, vh - bannerHeight + Math.round(40 * scale));
+
+        ctx.fillStyle = '#93c5fd';
+        ctx.font = `${Math.round(13.5 * scale)}px monospace`;
+        const gpsStr = `📍 Lat: ${geoLocation?.latitude.toFixed(5) || '-'}, Lng: ${geoLocation?.longitude.toFixed(5) || '-'} (±${geoLocation?.accuracy || 0}m)`;
+        ctx.fillText(gpsStr, rightColX, vh - bannerHeight + Math.round(68 * scale));
+
+        ctx.fillStyle = '#a7f3d0';
+        ctx.font = `bold ${Math.round(14 * scale)}px sans-serif`;
+        const locName = `🏢 ${matchedLocation?.name || 'Titik PKBM'} • ${isWithinGeofence ? 'Radius Sesuai' : dutyType === 'Dinas Luar' ? 'Dinas Luar' : 'Luar Radius'}`;
+        ctx.fillText(locName, rightColX, vh - bannerHeight + Math.round(96 * scale));
+      }
+
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.90);
       setPhotoDataUrl(dataUrl);
+      setPhotoOrientation(isPort ? 'portrait' : 'landscape');
+      setPhotoResolution({ width: vw, height: vh });
     }
     stopCamera();
+    setIsFullScreenCamera(false);
   };
 
-  // File Upload Handler
+  // File Upload Handler with Auto Dimension & Orientation Detection
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        setPhotoDataUrl(reader.result as string);
+        const result = reader.result as string;
+        const img = new Image();
+        img.onload = () => {
+          const w = img.naturalWidth || 800;
+          const h = img.naturalHeight || 600;
+          const isPort = h > w;
+          setPhotoOrientation(isPort ? 'portrait' : 'landscape');
+          setPhotoResolution({ width: w, height: h });
+        };
+        img.src = result;
+        setPhotoDataUrl(result);
       };
       reader.readAsDataURL(file);
     }

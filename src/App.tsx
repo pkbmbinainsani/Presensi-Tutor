@@ -9,6 +9,7 @@ import { LocationManagerModal } from './components/LocationManagerModal';
 import { AiAssistantModal } from './components/AiAssistantModal';
 import { SupabaseStatusModal } from './components/SupabaseStatusModal';
 import { TutorProfileModal } from './components/TutorProfileModal';
+import { TutorRekapitulasiView } from './components/TutorRekapitulasiView';
 import { AttendanceRecord, Tutor, UserSession, ClassLocation, PKBMInfo } from './types';
 import { 
   getAttendanceRecords, 
@@ -246,6 +247,16 @@ export default function App() {
             classLocations={locations}
             onRecordCreated={handleRecordCreated}
             onTutorUpdated={handleTutorProfileUpdated}
+          />
+        )}
+
+        {activeTab === 'rekap-tutor' && currentUser.role !== 'admin' && (
+          <TutorRekapitulasiView
+            currentUser={currentUser}
+            allRecords={attendanceRecords}
+            tutorProfile={currentTutor}
+            pkbmInfo={pkbmInfo}
+            onNavigateToPresensi={() => setActiveTab('presensi')}
           />
         )}
 

@@ -1,5 +1,5 @@
-import React from 'react';
-import { X, MapPin, Calendar, Clock, User, Award, ShieldCheck } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, MapPin, Calendar, Clock, User, Award, ShieldCheck, Download, ExternalLink, Maximize2, Smartphone, Monitor } from 'lucide-react';
 import { AttendanceRecord } from '../types';
 import { formatWibDateIndo, formatTimeWibDisplay } from '../lib/dateUtils';
 
@@ -11,57 +11,103 @@ interface PhotoWatermarkModalProps {
 export const PhotoWatermarkModal: React.FC<PhotoWatermarkModalProps> = ({ record, onClose }) => {
   if (!record) return null;
 
+  const [imgDimensions, setImgDimensions] = useState<{ width: number; height: number; isPortrait: boolean } | null>(null);
+
   const formattedDate = formatWibDateIndo(record.date, 'withDay');
 
+  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    const w = img.naturalWidth || 800;
+    const h = img.naturalHeight || 600;
+    setImgDimensions({
+      width: w,
+      height: h,
+      isPortrait: h > w
+    });
+  };
+
+  const handleDownloadPhoto = () => {
+    if (!record.photoUrl) return;
+    const link = document.createElement('a');
+    link.href = record.photoUrl;
+    const safeTutor = record.tutorName.replace(/[^a-zA-Z0-9]/g, '_');
+    link.download = `Presensi_${safeTutor}_${record.date}_${imgDimensions?.isPortrait ? 'portrait' : 'landscape'}.jpg`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200 my-8">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-3 sm:p-5 overflow-y-auto">
+      <div className="bg-white rounded-3xl max-w-3xl w-full overflow-hidden shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-200 my-auto">
         {/* Modal Header */}
-        <div className="bg-gradient-to-r from-emerald-800 to-teal-900 text-white p-4 px-6 flex items-center justify-between">
+        <div className="bg-gradient-to-r from-emerald-800 via-teal-900 to-slate-900 text-white p-4 sm:px-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-emerald-700/60 rounded-lg">
+            <div className="p-2 bg-emerald-700/60 rounded-xl border border-emerald-500/30">
               <ShieldCheck className="w-5 h-5 text-emerald-300" />
             </div>
             <div>
-              <h3 className="font-bold text-base leading-tight">Bukti Presensi & Foto Kegiatan</h3>
-              <p className="text-xs text-emerald-200">PKBM BINA INSANI SUMOWONO</p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-extrabold text-sm sm:text-base leading-tight">Bukti Presensi &amp; Foto Kegiatan Full</h3>
+                {imgDimensions && (
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border flex items-center gap-1 ${
+                    imgDimensions.isPortrait 
+                      ? 'bg-blue-950/80 text-blue-200 border-blue-400/40' 
+                      : 'bg-amber-950/80 text-amber-200 border-amber-400/40'
+                  }`}>
+                    {imgDimensions.isPortrait ? (
+                      <>
+                        <Smartphone className="w-3 h-3 text-blue-300" />
+                        <span>Mode Potret (Tegak) • {imgDimensions.width}×{imgDimensions.height}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Monitor className="w-3 h-3 text-amber-300" />
+                        <span>Mode Lanskap (Melebar) • {imgDimensions.width}×{imgDimensions.height}</span>
+                      </>
+                    )}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-emerald-200">PKBM BINA INSANI SUMOWONO • Tampilan Pandangan Luas Penuh</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="text-emerald-200 hover:text-white p-1 rounded-lg hover:bg-emerald-700/50 transition-colors"
+            className="text-emerald-200 hover:text-white p-1.5 rounded-xl hover:bg-emerald-700/50 transition-colors"
           >
             <X className="w-6 h-6" />
           </button>
         </div>
 
-        <div className="p-6 space-y-6">
-          {/* Photo Frame with Watermark Stamp Overlay */}
-          <div className="relative rounded-xl overflow-hidden border-2 border-slate-200 shadow-md bg-slate-950 group">
+        <div className="p-4 sm:p-6 space-y-5">
+          {/* Photo Frame with Full Adaptive Orientation & Watermark Stamp Overlay */}
+          <div className="relative rounded-2xl overflow-hidden border-2 border-slate-900 shadow-xl bg-slate-950 group flex flex-col items-center justify-center min-h-[260px]">
             <img
               src={record.photoUrl}
               alt={record.subjectTitle}
-              className="w-full h-80 object-cover object-center"
+              onLoad={handleImageLoad}
+              className="max-h-[60vh] sm:max-h-[65vh] w-auto max-w-full object-contain mx-auto rounded-xl transition-all duration-300"
             />
 
-            {/* Official Stamped Watermark Banner */}
-            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent p-4 text-white">
+            {/* Official Stamped Watermark Banner (Adaptive to Portrait or Landscape) */}
+            <div className="w-full bg-gradient-to-t from-slate-950 via-slate-950/90 to-transparent p-3 sm:p-4 text-white">
               <div className="border-l-4 border-emerald-500 pl-3 py-0.5 space-y-1">
-                <div className="flex items-center justify-between text-xs font-semibold text-emerald-400 tracking-wide uppercase">
+                <div className="flex items-center justify-between text-[11px] sm:text-xs font-black text-emerald-400 tracking-wide uppercase">
                   <span>PKBM BINA INSANI SUMOWONO</span>
                   <span className="bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 px-2 py-0.5 rounded text-[10px]">
                     VERIFIED GPS
                   </span>
                 </div>
-                <div className="text-sm font-bold text-white">
+                <div className="text-xs sm:text-sm font-extrabold text-white">
                   {record.tutorName} • {record.program}
                 </div>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-300">
-                  <span className="flex items-center gap-1">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-300">
+                  <span className="flex items-center gap-1 font-semibold">
                     <Calendar className="w-3.5 h-3.5 text-emerald-400" />
-                    {formattedDate} • {formatTimeWibDisplay(record.timeStart)}
+                    {formattedDate} • {formatTimeWibDisplay(record.timeStart)} WIB
                   </span>
-                  <span className="flex items-center gap-1">
+                  <span className="flex items-center gap-1 font-mono text-[10px] sm:text-[11px]">
                     <MapPin className="w-3.5 h-3.5 text-amber-400" />
                     Lat: {record.location.latitude.toFixed(5)}, Lng: {record.location.longitude.toFixed(5)}
                   </span>
@@ -71,28 +117,28 @@ export const PhotoWatermarkModal: React.FC<PhotoWatermarkModalProps> = ({ record
           </div>
 
           {/* Detailed Info Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">
-                Detail Kegiatan
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 text-sm">
+            <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-2">
+              <span className="text-xs font-black text-slate-500 uppercase tracking-wider block">
+                Detail Kegiatan Pembelajaran
               </span>
               <div>
-                <p className="font-bold text-slate-800">{record.subjectTitle}</p>
-                <p className="text-xs text-slate-600">{record.classGroup}</p>
+                <p className="font-extrabold text-slate-900 text-sm">{record.subjectTitle}</p>
+                <p className="text-xs text-slate-600 font-semibold">{record.classGroup}</p>
               </div>
-              <div className="text-xs text-slate-700 bg-white p-2 rounded border border-slate-200 mt-2">
-                <strong>Catatan Materi:</strong> {record.activityNotes}
+              <div className="text-xs text-slate-700 bg-white p-2.5 rounded-xl border border-slate-200 mt-2">
+                <strong className="text-slate-900">Materi / Catatan:</strong> {record.activityNotes || '-'}
               </div>
             </div>
 
-            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">
-                Verifikasi Lokasi Real-time
+            <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-2">
+              <span className="text-xs font-black text-slate-500 uppercase tracking-wider block">
+                Verifikasi Geofence Real-time
               </span>
               <div className="space-y-1 text-xs text-slate-700">
                 <p className="flex justify-between">
-                  <span className="text-slate-500">Status Geofence:</span>
-                  <span className={`font-semibold px-2 py-0.5 rounded ${
+                  <span className="text-slate-500">Status Titik Presensi:</span>
+                  <span className={`font-extrabold px-2 py-0.5 rounded-md ${
                     record.status === 'Dinas Luar'
                       ? 'bg-blue-100 text-blue-800 border border-blue-300'
                       : record.location.isWithinRadius 
@@ -103,16 +149,16 @@ export const PhotoWatermarkModal: React.FC<PhotoWatermarkModalProps> = ({ record
                   </span>
                 </p>
                 <p className="flex justify-between">
-                  <span className="text-slate-500">Jarak ke Pusat PKBM:</span>
-                  <span className="font-semibold text-slate-800">{record.location.distanceToCenterMeters || 0} meter</span>
+                  <span className="text-slate-500">Jarak ke Titik Resmi:</span>
+                  <span className="font-bold text-slate-800">{record.location.distanceToCenterMeters || 0} meter</span>
                 </p>
                 <p className="flex justify-between">
-                  <span className="text-slate-500">Akurasi Perangkat:</span>
-                  <span className="font-semibold text-slate-800">±{record.location.accuracy}m</span>
+                  <span className="text-slate-500">Akurasi GPS HP:</span>
+                  <span className="font-bold text-slate-800">±{record.location.accuracy}m</span>
                 </p>
                 <p className="text-slate-600 pt-1 border-t border-slate-200">
-                  <strong className="text-slate-700">Alamat Terdeteksi:</strong><br />
-                  {record.location.address || "Kecamatan Sumowono, Kabupaten Semarang"}
+                  <strong className="text-slate-700">Titik / Alamat:</strong><br />
+                  {record.location.matchedLocationName || record.location.address || "Kecamatan Sumowono, Kabupaten Semarang"}
                 </p>
               </div>
             </div>
@@ -120,10 +166,20 @@ export const PhotoWatermarkModal: React.FC<PhotoWatermarkModalProps> = ({ record
         </div>
 
         {/* Modal Footer */}
-        <div className="bg-slate-50 px-6 py-3 border-t border-slate-200 flex justify-end">
+        <div className="bg-slate-50 px-5 sm:px-6 py-3.5 border-t border-slate-200 flex items-center justify-between flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={handleDownloadPhoto}
+            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-sm"
+            title="Unduh file foto asli ini ke galeri/komputer"
+          >
+            <Download className="w-4 h-4" />
+            <span>Unduh Foto Asli</span>
+          </button>
+
           <button
             onClick={onClose}
-            className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold rounded-lg transition-colors"
+            className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-xl transition-colors shadow-sm"
           >
             Tutup
           </button>

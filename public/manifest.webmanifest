@@ -1,0 +1,33 @@
+{
+  "id": "/",
+  "name": "Absensi Tutor PKBM Bina Insani",
+  "short_name": "Absensi PKBM",
+  "description": "Sistem presensi kegiatan tutor PKBM Bina Insani Sumowono berbasis lokasi real-time, foto kegiatan, dan rekapitulasi otomatis.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#047857",
+  "background_color": "#ffffff",
+  "lang": "id",
+  "icons": [
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

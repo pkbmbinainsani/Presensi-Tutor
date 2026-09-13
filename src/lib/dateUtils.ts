@@ -172,10 +172,12 @@ export function isTodayWib(dateStr?: string | null): boolean {
   return getWibDate(dateStr) === getWibToday();
 }
 
+export type WibPresetType = 'today' | 'last7Days' | 'thisMonth' | 'lastMonth' | 'last3Months' | 'thisYear' | 'all';
+
 /**
- * Menghitung rentang tanggal preset (Hari Ini, Bulan Ini, 3 Bulan, Tahun Ini) murni dalam zona WIB.
+ * Menghitung rentang tanggal preset (Hari Ini, 7 Hari Terakhir, Bulan Ini, Bulan Lalu, 3 Bulan, Tahun Ini) murni dalam zona WIB.
  */
-export function getWibPresetRange(preset: 'today' | 'thisMonth' | 'last3Months' | 'thisYear' | 'all'): { startDate: string; endDate: string } {
+export function getWibPresetRange(preset: WibPresetType): { startDate: string; endDate: string } {
   const { year, month, day } = getWibDateParts();
   const todayStr = `${year}-${padZero(month)}-${padZero(day)}`;
 
@@ -183,11 +185,32 @@ export function getWibPresetRange(preset: 'today' | 'thisMonth' | 'last3Months' 
     return { startDate: todayStr, endDate: todayStr };
   }
 
+  if (preset === 'last7Days') {
+    // 6 days before today in local date
+    const d = new Date(year, month - 1, day - 6);
+    const startStr = `${d.getFullYear()}-${padZero(d.getMonth() + 1)}-${padZero(d.getDate())}`;
+    return { startDate: startStr, endDate: todayStr };
+  }
+
   if (preset === 'thisMonth') {
     const lastDayNum = new Date(year, month, 0).getDate();
     return {
       startDate: `${year}-${padZero(month)}-01`,
       endDate: `${year}-${padZero(month)}-${padZero(lastDayNum)}`
+    };
+  }
+
+  if (preset === 'lastMonth') {
+    let prevYear = year;
+    let prevMonth = month - 1;
+    if (prevMonth < 1) {
+      prevYear -= 1;
+      prevMonth = 12;
+    }
+    const lastDayNum = new Date(prevYear, prevMonth, 0).getDate();
+    return {
+      startDate: `${prevYear}-${padZero(prevMonth)}-01`,
+      endDate: `${prevYear}-${padZero(prevMonth)}-${padZero(lastDayNum)}`
     };
   }
 

@@ -15,7 +15,8 @@ import {
   MapPin,
   Camera,
   Database,
-  RefreshCw
+  RefreshCw,
+  CalendarRange
 } from 'lucide-react';
 import { PKBM_CONFIG } from '../data/mockData';
 import { UserSession } from '../types';
@@ -74,6 +75,7 @@ export const Header: React.FC<HeaderProps> = ({
       ]
     : [
         { id: 'presensi', label: 'Form Presensi Mandiri Tutor', icon: ClipboardCheck },
+        { id: 'rekap-tutor', label: 'Rekapitulasi Saya', icon: CalendarRange },
         { id: 'profil', label: 'Profil Saya & Foto', icon: User },
       ];
 
