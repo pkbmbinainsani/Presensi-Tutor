@@ -19,22 +19,46 @@
               this.OPEN = 1;
               this.CLOSING = 2;
               this.CLOSED = 3;
-              this.readyState = 1; // Mark immediately OPEN to satisfy Vite client without waiting
+              this.readyState = 1; // Mark immediately OPEN to satisfy Vite client
 
               this.onopen = null;
               this.onmessage = null;
               this.onerror = null;
               this.onclose = null;
+
+              // Dispatch connected message on next microtask to complete handshake
+              setTimeout(() => {
+                if (this.readyState === 1) {
+                  const openEv = new Event('open');
+                  this.dispatchEvent(openEv);
+                  if (typeof this.onopen === 'function') {
+                    try { this.onopen(openEv); } catch (e) {}
+                  }
+
+                  try {
+                    const connEv = new MessageEvent('message', {
+                      data: JSON.stringify({ type: 'connected' })
+                    });
+                    this.dispatchEvent(connEv);
+                    if (typeof this.onmessage === 'function') {
+                      this.onmessage(connEv);
+                    }
+                  } catch (e) {}
+                }
+              }, 0);
             }
 
-            send(data) {}
+            send(data) {
+              // Return promise to satisfy any async transport caller
+              return Promise.resolve();
+            }
 
             close(code, reason) {
               this.readyState = 3;
               const ev = new Event('close');
               this.dispatchEvent(ev);
               if (typeof this.onclose === 'function') {
-                this.onclose(ev);
+                try { this.onclose(ev); } catch (e) {}
               }
             }
           }
@@ -63,17 +87,30 @@
         }
 
         // 2. Filter console and window error events for any residual [vite] messages
+        const isViteMessage = function(args) {
+          for (let i = 0; i < args.length; i++) {
+            const a = args[i];
+            if (typeof a === 'string' && (a.includes('[vite]') || a.includes('vite:') || a.toLowerCase().includes('websocket'))) {
+              return true;
+            }
+            if (a instanceof Error && (a.message.includes('[vite]') || a.message.includes('WebSocket') || (a.stack && a.stack.includes('@vite')))) {
+              return true;
+            }
+          }
+          const fullMsg = args.map(arg => {
+            if (typeof arg === 'string') return arg;
+            if (arg && arg.message) return arg.message;
+            if (arg && typeof arg === 'object') {
+              try { return JSON.stringify(arg); } catch (e) { return ''; }
+            }
+            return String(arg || '');
+          }).join(' ');
+          return fullMsg.includes('[vite]') || fullMsg.toLowerCase().includes('websocket');
+        };
+
         const filterVite = function(originalFn) {
           return function(...args) {
-            const fullMsg = args.map(arg => {
-              if (typeof arg === 'string') return arg;
-              if (arg && arg.message) return arg.message;
-              if (arg && typeof arg === 'object') {
-                try { return JSON.stringify(arg); } catch (e) { return ''; }
-              }
-              return String(arg || '');
-            }).join(' ');
-            if (fullMsg.includes('[vite]') || fullMsg.toLowerCase().includes('websocket')) {
+            if (isViteMessage(args)) {
               return;
             }
             return originalFn.apply(console, args);
@@ -85,6 +122,17 @@
         console.info = filterVite(console.info);
         console.log = filterVite(console.log);
         console.debug = filterVite(console.debug);
+
+        const prevOnError = window.onerror;
+        window.onerror = function(msg, source, lineno, colno, error) {
+          const str = String(msg || '') + ' ' + (error ? String(error.message || '') : '');
+          if (str.includes('[vite]') || str.toLowerCase().includes('websocket')) {
+            return true;
+          }
+          if (typeof prevOnError === 'function') {
+            return prevOnError.apply(this, arguments);
+          }
+        };
 
         window.addEventListener('error', function(event) {
           const msg = (event && (event.message || (event.error && event.error.message))) || '';
