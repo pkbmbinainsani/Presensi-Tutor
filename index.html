@@ -3,14 +3,28 @@
   <head>
     <script>
       (function() {
-        const origError = console.error;
-        console.error = function(...args) {
-          if (typeof args[0] === 'string' && args[0].includes('[vite]')) {
-            console.debug(...args);
-            return;
-          }
-          origError.apply(console, args);
+        const filterVite = function(originalFn) {
+          return function(...args) {
+            const fullMsg = args.map(arg => {
+              if (typeof arg === 'string') return arg;
+              if (arg && arg.message) return arg.message;
+              return '';
+            }).join(' ');
+            if (fullMsg.includes('[vite]') || fullMsg.toLowerCase().includes('websocket')) {
+              return;
+            }
+            return originalFn.apply(console, args);
+          };
         };
+        console.error = filterVite(console.error);
+        console.warn = filterVite(console.warn);
+
+        window.addEventListener('error', function(event) {
+          if (event && event.message && (event.message.includes('[vite]') || event.message.toLowerCase().includes('websocket'))) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
       })();
     </script>
     <meta charset="UTF-8" />
