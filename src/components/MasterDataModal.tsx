@@ -66,8 +66,11 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
   const [pkbmInfo, setPkbmInfo] = useState<PKBMInfo>(() => propPkbmInfo || getPKBMInfo());
   const [foundationManager, setFoundationManager] = useState<string>(pkbmInfo.foundationManagerName || 'H. Sugeng Wahyudi, S.E.');
   const [foundationTitle, setFoundationTitle] = useState<string>(pkbmInfo.foundationManagerTitle || 'Pengelola / Ketua Yayasan Bina Insani');
+  const [foundationNip, setFoundationNip] = useState<string>(pkbmInfo.foundationManagerNip || '');
   const [headName, setHeadName] = useState<string>(pkbmInfo.headName || 'Lailatul Arifah, S.H., M.Pd.');
+  const [headNip, setHeadNip] = useState<string>(pkbmInfo.headNip || '');
   const [attendanceOfficer, setAttendanceOfficer] = useState<string>(pkbmInfo.attendanceOfficerName || 'Nunung Khoiriyah');
+  const [attendanceOfficerNip, setAttendanceOfficerNip] = useState<string>(pkbmInfo.attendanceOfficerNip || '');
   const [isLeadershipOpen, setIsLeadershipOpen] = useState<boolean>(false);
   const [leadershipSuccessMsg, setLeadershipSuccessMsg] = useState<string | null>(null);
   const [isSavingLeadership, setIsSavingLeadership] = useState<boolean>(false);
@@ -94,8 +97,11 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
       setUseLogoAsFavicon(propPkbmInfo.useLogoAsFavicon !== false);
       setFoundationManager(propPkbmInfo.foundationManagerName || '');
       setFoundationTitle(propPkbmInfo.foundationManagerTitle || '');
+      setFoundationNip(propPkbmInfo.foundationManagerNip || '');
       setHeadName(propPkbmInfo.headName || '');
+      setHeadNip(propPkbmInfo.headNip || '');
       setAttendanceOfficer(propPkbmInfo.attendanceOfficerName || '');
+      setAttendanceOfficerNip(propPkbmInfo.attendanceOfficerNip || '');
     }
   }, [propPkbmInfo]);
 
@@ -210,8 +216,11 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
         ...currentInfo,
         foundationManagerName: foundationManager.trim(),
         foundationManagerTitle: foundationTitle.trim(),
+        foundationManagerNip: foundationNip.trim(),
         headName: headName.trim(),
-        attendanceOfficerName: attendanceOfficer.trim()
+        headNip: headNip.trim(),
+        attendanceOfficerName: attendanceOfficer.trim(),
+        attendanceOfficerNip: attendanceOfficerNip.trim()
       };
       const syncedOnline = await savePKBMInfo(updatedInfo);
       setPkbmInfo(updatedInfo);
@@ -852,14 +861,23 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
             <div className="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/60">
               <p className="text-[10px] text-amber-300 font-bold uppercase">{pkbmInfo.foundationManagerTitle || 'Pengelola Yayasan'}</p>
               <p className="font-extrabold text-white mt-0.5 truncate">{pkbmInfo.foundationManagerName || 'H. Sugeng Wahyudi, S.E.'}</p>
+              {pkbmInfo.foundationManagerNip && pkbmInfo.foundationManagerNip.trim() ? (
+                <p className="text-[10px] text-amber-200/80 font-mono mt-0.5 truncate">{pkbmInfo.foundationManagerNip}</p>
+              ) : null}
             </div>
             <div className="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/60">
               <p className="text-[10px] text-blue-300 font-bold uppercase">Kepala PKBM</p>
               <p className="font-extrabold text-white mt-0.5 truncate">{pkbmInfo.headName || 'Lailatul Arifah, S.H., M.Pd.'}</p>
+              {pkbmInfo.headNip && pkbmInfo.headNip.trim() ? (
+                <p className="text-[10px] text-blue-200/80 font-mono mt-0.5 truncate">{pkbmInfo.headNip}</p>
+              ) : null}
             </div>
             <div className="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/60">
-              <p className="text-[10px] text-emerald-300 font-bold uppercase">Penanggungjawab Absensi</p>
+              <p className="text-[10px] text-emerald-300 font-bold uppercase">Penanggung Jawab Absensi</p>
               <p className="font-extrabold text-white mt-0.5 truncate">{pkbmInfo.attendanceOfficerName || 'Nunung Khoiriyah'}</p>
+              {pkbmInfo.attendanceOfficerNip && pkbmInfo.attendanceOfficerNip.trim() ? (
+                <p className="text-[10px] text-emerald-200/80 font-mono mt-0.5 truncate">{pkbmInfo.attendanceOfficerNip}</p>
+              ) : null}
             </div>
           </div>
         )}
@@ -896,15 +914,27 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
                   placeholder="misal: H. Sugeng Wahyudi, S.E."
                   className="w-full bg-slate-800 border border-slate-600 rounded-lg p-2 font-bold text-white outline-none focus:ring-2 focus:ring-amber-400"
                 />
+                <p className="text-[10px] text-slate-400 mt-1">NIP / NIY (Opsional, kosongkan jika tidak ada):</p>
+                <input
+                  type="text"
+                  value={foundationNip}
+                  onChange={(e) => setFoundationNip(e.target.value)}
+                  placeholder="misal: NIY. 12345 (kosongkan bila tidak ada)"
+                  className="w-full bg-slate-800 border border-slate-600 rounded-lg p-2 font-mono text-white outline-none focus:ring-2 focus:ring-amber-400"
+                />
                 <select
                   onChange={(e) => {
-                    if (e.target.value) setFoundationManager(e.target.value);
+                    const sel = tutors.find(t => t.id === e.target.value);
+                    if (sel) {
+                      setFoundationManager(sel.name);
+                      if (sel.nipCode) setFoundationNip(sel.nipCode);
+                    }
                   }}
-                  className="w-full bg-slate-800 border border-slate-700 text-slate-300 rounded-lg p-1.5 text-[11px]"
+                  className="w-full bg-slate-800 border border-slate-700 text-slate-300 rounded-lg p-1.5 text-[11px] mt-1"
                 >
                   <option value="">-- Pilih dari Personel Registered --</option>
                   {tutors.map(t => (
-                    <option key={t.id} value={t.name}>{t.name} ({t.position || t.roleType})</option>
+                    <option key={t.id} value={t.id}>{t.name} ({t.position || t.roleType})</option>
                   ))}
                 </select>
               </div>
@@ -923,25 +953,37 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
                   placeholder="misal: Lailatul Arifah, S.H., M.Pd."
                   className="w-full bg-slate-800 border border-slate-600 rounded-lg p-2 font-bold text-white outline-none focus:ring-2 focus:ring-blue-400"
                 />
+                <p className="text-[10px] text-slate-400 mt-1">NIP / NIY (Opsional, kosongkan jika tidak ada):</p>
+                <input
+                  type="text"
+                  value={headNip}
+                  onChange={(e) => setHeadNip(e.target.value)}
+                  placeholder="misal: NIP. 1982... (kosongkan bila tidak ada)"
+                  className="w-full bg-slate-800 border border-slate-600 rounded-lg p-2 font-mono text-white outline-none focus:ring-2 focus:ring-blue-400"
+                />
                 <select
                   onChange={(e) => {
-                    if (e.target.value) setHeadName(e.target.value);
+                    const sel = tutors.find(t => t.id === e.target.value);
+                    if (sel) {
+                      setHeadName(sel.name);
+                      if (sel.nipCode) setHeadNip(sel.nipCode);
+                    }
                   }}
-                  className="w-full bg-slate-800 border border-slate-700 text-slate-300 rounded-lg p-1.5 text-[11px]"
+                  className="w-full bg-slate-800 border border-slate-700 text-slate-300 rounded-lg p-1.5 text-[11px] mt-1"
                 >
                   <option value="">-- Pilih dari Personel Registered --</option>
                   {tutors.map(t => (
-                    <option key={t.id} value={t.name}>{t.name} ({t.position || t.roleType})</option>
+                    <option key={t.id} value={t.id}>{t.name} ({t.position || t.roleType})</option>
                   ))}
                 </select>
               </div>
 
-              {/* Penanggungjawab Absen */}
+              {/* Penanggung Jawab Absensi */}
               <div className="space-y-1.5 bg-slate-900/80 p-3 rounded-xl border border-slate-700">
                 <label className="block font-bold text-emerald-300 text-[11px] uppercase tracking-wider">
-                  3. Penanggungjawab Absensi
+                  3. Penanggung Jawab Absensi
                 </label>
-                <p className="text-[10px] text-slate-400">Nama Penanggungjawab Absensi:</p>
+                <p className="text-[10px] text-slate-400">Nama Penanggung Jawab Absensi:</p>
                 <input
                   type="text"
                   required
@@ -950,15 +992,27 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
                   placeholder="misal: Nunung Khoiriyah"
                   className="w-full bg-slate-800 border border-slate-600 rounded-lg p-2 font-bold text-white outline-none focus:ring-2 focus:ring-emerald-400"
                 />
+                <p className="text-[10px] text-slate-400 mt-1">NIP / ID Pegawai (Opsional, kosongkan jika tidak ada):</p>
+                <input
+                  type="text"
+                  value={attendanceOfficerNip}
+                  onChange={(e) => setAttendanceOfficerNip(e.target.value)}
+                  placeholder="misal: ID Pegawai (kosongkan bila tidak ada)"
+                  className="w-full bg-slate-800 border border-slate-600 rounded-lg p-2 font-mono text-white outline-none focus:ring-2 focus:ring-emerald-400"
+                />
                 <select
                   onChange={(e) => {
-                    if (e.target.value) setAttendanceOfficer(e.target.value);
+                    const sel = tutors.find(t => t.id === e.target.value);
+                    if (sel) {
+                      setAttendanceOfficer(sel.name);
+                      if (sel.nipCode) setAttendanceOfficerNip(sel.nipCode);
+                    }
                   }}
-                  className="w-full bg-slate-800 border border-slate-700 text-slate-300 rounded-lg p-1.5 text-[11px]"
+                  className="w-full bg-slate-800 border border-slate-700 text-slate-300 rounded-lg p-1.5 text-[11px] mt-1"
                 >
                   <option value="">-- Pilih dari Personel Registered --</option>
                   {tutors.map(t => (
-                    <option key={t.id} value={t.name}>{t.name} ({t.position || t.roleType})</option>
+                    <option key={t.id} value={t.id}>{t.name} ({t.position || t.roleType})</option>
                   ))}
                 </select>
               </div>

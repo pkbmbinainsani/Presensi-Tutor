@@ -15,11 +15,11 @@ export const PKBM_CONFIG: PKBMInfo = {
   useLogoAsFavicon: true,
   foundationManagerName: "H. Sugeng Wahyudi, S.E.",
   foundationManagerTitle: "Pengelola / Ketua Yayasan Bina Insani",
-  foundationManagerNip: "NIY. 19740815 201001 1 001",
+  foundationManagerNip: "",
   headName: "Lailatul Arifah, S.H., M.Pd.",
-  headNip: "NIY/NIP. 19820512 201202 2 002",
+  headNip: "",
   attendanceOfficerName: "Nunung Khoiriyah",
-  attendanceOfficerNip: "ID Pegawai: 19900320 201803 2 003",
+  attendanceOfficerNip: "",
   centerCoordinates: {
     latitude: -7.21854,
     longitude: 110.33402

@@ -340,12 +340,39 @@ export const PrintReportView: React.FC<PrintReportViewProps> = ({ records, pkbmI
     // Signatures
     excelRows.push([]);
     excelRows.push([]);
-    excelRows.push(["Mengetahui,", "", "", "Menyetujui,", "", "", `Sumowono, ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`]);
-    excelRows.push([pkbmInfo.foundationManagerTitle || "Pengelola Yayasan", "", "", "Kepala PKBM BINA INSANI", "", "", "Penanggungjawab Absensi"]);
+    excelRows.push([
+      "Mengetahui,", "", "",
+      "Menyetujui,", "", "", "",
+      `Sumowono, ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`
+    ]);
+    excelRows.push([
+      pkbmInfo.foundationManagerTitle || "Pengelola Yayasan", "", "",
+      "Kepala PKBM BINA INSANI", "", "", "",
+      "Penanggung Jawab Absensi"
+    ]);
     excelRows.push([]);
     excelRows.push([]);
-    excelRows.push([pkbmInfo.foundationManagerName || "H. Sugeng Wahyudi, S.E.", "", "", pkbmInfo.headName || "Lailatul Arifah, S.H., M.Pd.", "", "", pkbmInfo.attendanceOfficerName || "Nunung Khoiriyah"]);
-    excelRows.push([pkbmInfo.foundationManagerNip || "NIY. 19740815 201001 1 001", "", "", pkbmInfo.headNip || "NIY/NIP. 19820512 201202 2 002", "", "", pkbmInfo.attendanceOfficerNip || "ID Pegawai: 19900320 201803 2 003"]);
+    excelRows.push([]);
+    excelRows.push([
+      pkbmInfo.foundationManagerName || "H. Sugeng Wahyudi, S.E.", "", "",
+      pkbmInfo.headName || "Lailatul Arifah, S.H., M.Pd.", "", "", "",
+      pkbmInfo.attendanceOfficerName || "Nunung Khoiriyah"
+    ]);
+    
+    const hasAnyNip = Boolean(
+      (pkbmInfo.foundationManagerNip && pkbmInfo.foundationManagerNip.trim()) ||
+      (pkbmInfo.headNip && pkbmInfo.headNip.trim()) ||
+      (pkbmInfo.attendanceOfficerNip && pkbmInfo.attendanceOfficerNip.trim())
+    );
+    if (hasAnyNip) {
+      excelRows.push([
+        pkbmInfo.foundationManagerNip ? pkbmInfo.foundationManagerNip.trim() : "",
+        "", "",
+        pkbmInfo.headNip ? pkbmInfo.headNip.trim() : "",
+        "", "", "",
+        pkbmInfo.attendanceOfficerNip ? pkbmInfo.attendanceOfficerNip.trim() : ""
+      ]);
+    }
 
     const worksheet = XLSX.utils.aoa_to_sheet(excelRows);
 
@@ -774,31 +801,115 @@ export const PrintReportView: React.FC<PrintReportViewProps> = ({ records, pkbmI
           </table>
         </div>
 
-        {/* Signature Blocks (3 Columns: Pengelola Yayasan, Kepala PKBM, Penanggungjawab Absen) */}
-        <div className="grid grid-cols-3 gap-6 text-xs pt-6 border-t-2 border-slate-900 text-center break-inside-avoid">
-          <div>
-            <p className="text-slate-700 font-medium">Mengetahui,</p>
-            <p className="font-bold text-slate-900 uppercase">{pkbmInfo.foundationManagerTitle || 'Pengelola / Ketua Yayasan'}</p>
-            <div className="h-20 sm:h-24"></div>
-            <p className="font-bold underline text-slate-900 text-sm">{pkbmInfo.foundationManagerName || 'H. Sugeng Wahyudi, S.E.'}</p>
-            <p className="text-[11px] font-bold text-slate-800 mt-0.5">{pkbmInfo.foundationManagerNip || 'NIY. 19740815 201001 1 001'}</p>
+        {/* Signature Section (Format Naskah Resmi Tata Kelola Dokumen) */}
+        <div className="pt-8 border-t-2 border-slate-900 break-inside-avoid">
+          {/* Tempat & Tanggal Dokumen (Sejajar tepat di atas kolom tanda tangan kanan) */}
+          <div className="flex justify-end mb-3">
+            <div className="w-1/3 text-center">
+              <p className="text-xs font-medium text-slate-800">
+                Sumowono, {formatWibDateIndo(getWibToday(), 'long')}
+              </p>
+            </div>
           </div>
 
-          <div>
-            <p className="text-slate-700 font-medium">Menyetujui,</p>
-            <p className="font-bold text-slate-900 uppercase">Kepala PKBM BINA INSANI</p>
-            <div className="h-20 sm:h-24"></div>
-            <p className="font-bold underline text-slate-900 text-sm">{pkbmInfo.headName || 'Lailatul Arifah, S.H., M.Pd.'}</p>
-            <p className="text-[11px] font-bold text-slate-800 mt-0.5">{pkbmInfo.headNip || 'NIY/NIP. 19820512 201202 2 002'}</p>
-          </div>
+          <table className="w-full border-0 border-none border-collapse text-center table-fixed">
+            <tbody>
+              {/* Baris Kategori / Kata Pengantar */}
+              <tr className="align-bottom text-xs">
+                <td className="w-1/3 px-2 border-0 border-none">
+                  <p className="text-slate-700 font-medium">Mengetahui,</p>
+                </td>
+                <td className="w-1/3 px-2 border-0 border-none">
+                  <p className="text-slate-700 font-medium">Menyetujui,</p>
+                </td>
+                <td className="w-1/3 px-2 border-0 border-none">
+                  <p className="text-slate-700 font-medium">Penanggung Jawab,</p>
+                </td>
+              </tr>
 
-          <div>
-            <p className="text-slate-700 font-medium">Sumowono, {formatWibDateIndo(getWibToday(), 'long')}</p>
-            <p className="font-bold text-slate-900 uppercase">Penanggungjawab Absensi</p>
-            <div className="h-20 sm:h-24"></div>
-            <p className="font-bold underline text-slate-900 text-sm">{pkbmInfo.attendanceOfficerName || 'Nunung Khoiriyah'}</p>
-            <p className="text-[11px] font-bold text-slate-800 mt-0.5">{pkbmInfo.attendanceOfficerNip || 'ID Pegawai: 19900320 201803 2 003'}</p>
-          </div>
+              {/* Baris Jabatan Kedinasan */}
+              <tr className="align-top text-xs">
+                <td className="w-1/3 px-2 pt-0.5 border-0 border-none">
+                  <p className="font-bold text-slate-900 uppercase text-xs leading-snug max-w-[240px] mx-auto">
+                    {pkbmInfo.foundationManagerTitle || 'Pengelola / Ketua Yayasan'}
+                  </p>
+                </td>
+                <td className="w-1/3 px-2 pt-0.5 border-0 border-none">
+                  <p className="font-bold text-slate-900 uppercase text-xs leading-snug max-w-[240px] mx-auto">
+                    Kepala PKBM BINA INSANI
+                  </p>
+                </td>
+                <td className="w-1/3 px-2 pt-0.5 border-0 border-none">
+                  <p className="font-bold text-slate-900 uppercase text-xs leading-snug max-w-[240px] mx-auto">
+                    Absensi & Presensi Belajar
+                  </p>
+                </td>
+              </tr>
+
+              {/* Baris Ruang Tanda Tangan Fisik / Digital */}
+              <tr>
+                <td className="h-20 sm:h-24 border-0 border-none"></td>
+                <td className="h-20 sm:h-24 border-0 border-none"></td>
+                <td className="h-20 sm:h-24 border-0 border-none"></td>
+              </tr>
+
+              {/* Baris Nama Terang Lengkap Bergaris Bawah - Rata Horizontal Sempurna */}
+              <tr className="align-bottom">
+                <td className="w-1/3 px-2 border-0 border-none">
+                  <div className="inline-block max-w-[95%]">
+                    <span className="font-bold text-slate-950 text-xs sm:text-sm tracking-wide border-b-[1.5px] border-slate-900 pb-0.5 inline-block">
+                      {pkbmInfo.foundationManagerName || 'H. Sugeng Wahyudi, S.E.'}
+                    </span>
+                  </div>
+                </td>
+                <td className="w-1/3 px-2 border-0 border-none">
+                  <div className="inline-block max-w-[95%]">
+                    <span className="font-bold text-slate-950 text-xs sm:text-sm tracking-wide border-b-[1.5px] border-slate-900 pb-0.5 inline-block">
+                      {pkbmInfo.headName || 'Lailatul Arifah, S.H., M.Pd.'}
+                    </span>
+                  </div>
+                </td>
+                <td className="w-1/3 px-2 border-0 border-none">
+                  <div className="inline-block max-w-[95%]">
+                    <span className="font-bold text-slate-950 text-xs sm:text-sm tracking-wide border-b-[1.5px] border-slate-900 pb-0.5 inline-block">
+                      {pkbmInfo.attendanceOfficerName || 'Nunung Khoiriyah'}
+                    </span>
+                  </div>
+                </td>
+              </tr>
+
+              {/* Baris Nomor Induk (NIP / NIY / ID Pegawai) */}
+              <tr className="align-top text-xs">
+                <td className="w-1/3 px-2 pt-1 border-0 border-none">
+                  {pkbmInfo.foundationManagerNip && pkbmInfo.foundationManagerNip.trim() ? (
+                    <p className="text-[11px] font-semibold text-slate-700 font-mono tracking-tight">
+                      {pkbmInfo.foundationManagerNip.trim()}
+                    </p>
+                  ) : (
+                    <div className="h-4"></div>
+                  )}
+                </td>
+                <td className="w-1/3 px-2 pt-1 border-0 border-none">
+                  {pkbmInfo.headNip && pkbmInfo.headNip.trim() ? (
+                    <p className="text-[11px] font-semibold text-slate-700 font-mono tracking-tight">
+                      {pkbmInfo.headNip.trim()}
+                    </p>
+                  ) : (
+                    <div className="h-4"></div>
+                  )}
+                </td>
+                <td className="w-1/3 px-2 pt-1 border-0 border-none">
+                  {pkbmInfo.attendanceOfficerNip && pkbmInfo.attendanceOfficerNip.trim() ? (
+                    <p className="text-[11px] font-semibold text-slate-700 font-mono tracking-tight">
+                      {pkbmInfo.attendanceOfficerNip.trim()}
+                    </p>
+                  ) : (
+                    <div className="h-4"></div>
+                  )}
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
       </div>

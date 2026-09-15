@@ -143,7 +143,32 @@ export function getPKBMInfo(): PKBMInfo {
       localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(PKBM_CONFIG));
       return PKBM_CONFIG;
     }
-    return JSON.parse(data);
+    const parsed: PKBMInfo = JSON.parse(data);
+
+    // Sanitize any residual legacy dummy NIP values
+    const dummyNips = [
+      'NIY. 19740815 201001 1 001',
+      'NIY/NIP. 19820512 201202 2 002',
+      'ID Pegawai: 19900320 201803 2 003'
+    ];
+    let changed = false;
+    if (parsed.foundationManagerNip && dummyNips.includes(parsed.foundationManagerNip)) {
+      parsed.foundationManagerNip = '';
+      changed = true;
+    }
+    if (parsed.headNip && dummyNips.includes(parsed.headNip)) {
+      parsed.headNip = '';
+      changed = true;
+    }
+    if (parsed.attendanceOfficerNip && dummyNips.includes(parsed.attendanceOfficerNip)) {
+      parsed.attendanceOfficerNip = '';
+      changed = true;
+    }
+    if (changed) {
+      localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(parsed));
+    }
+
+    return parsed;
   } catch (error) {
     return PKBM_CONFIG;
   }
