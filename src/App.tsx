@@ -31,6 +31,7 @@ import { getWibToday } from './lib/dateUtils';
 import { Shield, RefreshCw, School, MapPin, Database, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { PWAInstallFloatingBanner } from './components/PWAInstallComponents';
 import { OfflineIndicator } from './components/OfflineIndicator';
+import { updateDocumentFavicon } from './lib/faviconUtils';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
@@ -39,6 +40,14 @@ export default function App() {
   const [tutors, setTutors] = useState<Tutor[]>([]);
   const [locations, setLocations] = useState<ClassLocation[]>([]);
   const [pkbmInfo, setPkbmInfo] = useState<PKBMInfo>(() => getPKBMInfo());
+
+  // Dynamically update document favicon in browser tab
+  useEffect(() => {
+    const targetFavicon = pkbmInfo.useLogoAsFavicon !== false
+      ? (pkbmInfo.logoUrl || pkbmInfo.faviconUrl || '/favicon.svg')
+      : (pkbmInfo.faviconUrl || pkbmInfo.logoUrl || '/favicon.svg');
+    updateDocumentFavicon(targetFavicon);
+  }, [pkbmInfo.logoUrl, pkbmInfo.faviconUrl, pkbmInfo.useLogoAsFavicon]);
 
   // Supabase Online Status & Modal
   const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState<boolean>(false);

@@ -125,6 +125,8 @@ CREATE TABLE IF NOT EXISTS public.pkbm_info (
     phone TEXT,
     email TEXT,
     logo_url TEXT,
+    favicon_url TEXT,
+    use_logo_as_favicon BOOLEAN DEFAULT true,
     foundation_manager_name TEXT,
     foundation_manager_title TEXT,
     foundation_manager_nip TEXT,
@@ -136,6 +138,10 @@ CREATE TABLE IF NOT EXISTS public.pkbm_info (
     allowed_radius_meters INTEGER DEFAULT 300,
     updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
+
+-- Kolom tambahan untuk tabel versi terdahulu (jika sudah dibuat)
+ALTER TABLE public.pkbm_info ADD COLUMN IF NOT EXISTS favicon_url TEXT;
+ALTER TABLE public.pkbm_info ADD COLUMN IF NOT EXISTS use_logo_as_favicon BOOLEAN DEFAULT true;
 
 -- Aktifkan RLS & Kebijakan Akses Publik (Anon)
 ALTER TABLE public.tutors ENABLE ROW LEVEL SECURITY;

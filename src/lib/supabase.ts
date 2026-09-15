@@ -250,6 +250,8 @@ export function transformPKBMInfoFromDb(row: any): PKBMInfo {
     phone: row.phone || '',
     email: row.email || '',
     logoUrl: row.logo_url || '/logo.svg',
+    faviconUrl: row.favicon_url || row.logo_url || '/favicon.svg',
+    useLogoAsFavicon: row.use_logo_as_favicon !== undefined ? Boolean(row.use_logo_as_favicon) : true,
     foundationManagerName: row.foundation_manager_name || '',
     foundationManagerTitle: row.foundation_manager_title || '',
     foundationManagerNip: row.foundation_manager_nip || '',
@@ -275,6 +277,8 @@ export function transformPKBMInfoToDb(info: PKBMInfo): any {
     phone: info.phone,
     email: info.email,
     logo_url: info.logoUrl || '/logo.svg',
+    favicon_url: info.faviconUrl || info.logoUrl || '/favicon.svg',
+    use_logo_as_favicon: info.useLogoAsFavicon !== undefined ? info.useLogoAsFavicon : true,
     foundation_manager_name: info.foundationManagerName || '',
     foundation_manager_title: info.foundationManagerTitle || '',
     foundation_manager_nip: info.foundationManagerNip || '',
@@ -471,7 +475,21 @@ export async function fetchPKBMInfoOnline(): Promise<PKBMInfo | null> {
 export async function upsertPKBMInfoOnline(info: PKBMInfo): Promise<boolean> {
   try {
     const payload = transformPKBMInfoToDb(info);
-    const { error } = await supabase.from('pkbm_info').upsert(payload);
+    let { error } = await supabase.from('pkbm_info').upsert(payload);
+    
+    // Fallback: If older Supabase schema doesn't have favicon columns yet, retry without them
+    if (error && (
+      error.message?.toLowerCase().includes('favicon') || 
+      error.details?.toLowerCase().includes('favicon') ||
+      error.message?.toLowerCase().includes('column')
+    )) {
+      const fallbackPayload = { ...payload };
+      delete (fallbackPayload as any).favicon_url;
+      delete (fallbackPayload as any).use_logo_as_favicon;
+      const retry = await supabase.from('pkbm_info').upsert(fallbackPayload);
+      error = retry.error;
+    }
+
     if (error) {
       handleTableError('upsert pkbm_info', 'pkbm_info', error);
       return false;

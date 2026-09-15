@@ -11,6 +11,8 @@ export const PKBM_CONFIG: PKBMInfo = {
   phone: "+62852 9065 5103",
   email: "pkbmbinainsani.sumowono@gmail.com",
   logoUrl: "/logo.svg",
+  faviconUrl: "/favicon.svg",
+  useLogoAsFavicon: true,
   foundationManagerName: "H. Sugeng Wahyudi, S.E.",
   foundationManagerTitle: "Pengelola / Ketua Yayasan Bina Insani",
   foundationManagerNip: "NIY. 19740815 201001 1 001",

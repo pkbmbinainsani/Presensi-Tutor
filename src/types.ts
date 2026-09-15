@@ -91,6 +91,8 @@ export interface PKBMInfo {
   phone: string;
   email: string;
   logoUrl?: string;
+  faviconUrl?: string;
+  useLogoAsFavicon?: boolean;
   foundationManagerName?: string;
   foundationManagerTitle?: string;
   foundationManagerNip?: string;

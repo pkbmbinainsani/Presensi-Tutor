@@ -25,12 +25,17 @@ import {
   Image as ImageIcon,
   List,
   LayoutGrid,
-  Database
+  Database,
+  Globe,
+  Smartphone,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 import { Tutor, PKBMInfo } from '../types';
 import { saveTutor, deleteTutor, getPKBMInfo, savePKBMInfo } from '../lib/storage';
 import { SupabaseHealthStatus } from '../lib/supabase';
 import { compressProfileImage, compressLogoImage } from '../lib/imageUtils';
+import { compressFaviconImage, updateDocumentFavicon } from '../lib/faviconUtils';
 
 interface MasterDataModalProps {
   tutors: Tutor[];
@@ -67,20 +72,26 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
   const [leadershipSuccessMsg, setLeadershipSuccessMsg] = useState<string | null>(null);
   const [isSavingLeadership, setIsSavingLeadership] = useState<boolean>(false);
 
-  // Logo Customization State
+  // Logo & Favicon Customization State
   const [logoUrl, setLogoUrl] = useState<string>(pkbmInfo.logoUrl || '/logo.svg');
   const [logoInputUrl, setLogoInputUrl] = useState<string>('');
+  const [faviconUrl, setFaviconUrl] = useState<string>(pkbmInfo.faviconUrl || pkbmInfo.logoUrl || '/favicon.svg');
+  const [faviconInputUrl, setFaviconInputUrl] = useState<string>('');
+  const [useLogoAsFavicon, setUseLogoAsFavicon] = useState<boolean>(pkbmInfo.useLogoAsFavicon !== false);
   const [isLogoOpen, setIsLogoOpen] = useState<boolean>(false);
   const [logoSuccessMsg, setLogoSuccessMsg] = useState<string | null>(null);
   const [logoErrorMsg, setLogoErrorMsg] = useState<string | null>(null);
   const [isSavingLogo, setIsSavingLogo] = useState<boolean>(false);
   const [isProcessingImage, setIsProcessingImage] = useState<boolean>(false);
+  const [isProcessingFavicon, setIsProcessingFavicon] = useState<boolean>(false);
 
   // Keep state in sync whenever propPkbmInfo updates (from Supabase online sync or other PC)
   useEffect(() => {
     if (propPkbmInfo) {
       setPkbmInfo(propPkbmInfo);
       setLogoUrl(propPkbmInfo.logoUrl || '/logo.svg');
+      setFaviconUrl(propPkbmInfo.faviconUrl || propPkbmInfo.logoUrl || '/favicon.svg');
+      setUseLogoAsFavicon(propPkbmInfo.useLogoAsFavicon !== false);
       setFoundationManager(propPkbmInfo.foundationManagerName || '');
       setFoundationTitle(propPkbmInfo.foundationManagerTitle || '');
       setHeadName(propPkbmInfo.headName || '');
@@ -236,7 +247,10 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
 
       const optimized = await compressLogoImage(file, 400);
       setLogoUrl(optimized);
-      setLogoSuccessMsg('Berkas logo berhasil diproses! Klik tombol "Terapkan & Simpan Logo Baru" untuk menyinkronkan ke cloud.');
+      if (useLogoAsFavicon) {
+        setFaviconUrl(optimized);
+      }
+      setLogoSuccessMsg('Berkas logo berhasil diproses! Klik tombol "Terapkan & Simpan Logo & Favicon" untuk menyinkronkan ke cloud.');
     } catch (err: any) {
       setLogoErrorMsg('Gagal memproses berkas gambar: ' + (err?.message || 'Error'));
     } finally {
@@ -244,8 +258,45 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
     }
   };
 
+  const handleFaviconFileUpload = async (file: File) => {
+    setLogoErrorMsg(null);
+    setLogoSuccessMsg(null);
+    setIsProcessingFavicon(true);
+    try {
+      if (!file.type.startsWith('image/')) {
+        setLogoErrorMsg('Mohon pilih berkas gambar (PNG, SVG, ICO, JPG, WebP).');
+        return;
+      }
+      if (file.size > 2 * 1024 * 1024) {
+        setLogoErrorMsg('Ukuran berkas favicon maksimal 2MB.');
+        return;
+      }
+
+      const optimized = await compressFaviconImage(file, 128);
+      setFaviconUrl(optimized);
+      setUseLogoAsFavicon(false);
+      setLogoSuccessMsg('Berkas favicon khusus berhasil diproses! Jangan lupa klik "Terapkan & Simpan Logo & Favicon".');
+    } catch (err: any) {
+      setLogoErrorMsg('Gagal memproses favicon: ' + (err?.message || 'Error'));
+    } finally {
+      setIsProcessingFavicon(false);
+    }
+  };
+
+  const handleResetToDefaultFavicon = () => {
+    setFaviconUrl('/favicon.svg');
+    setFaviconInputUrl('');
+    setUseLogoAsFavicon(false);
+    setLogoSuccessMsg('Favicon disetel kembali ke ikon resmi PKBM Bina Insani.');
+    setTimeout(() => setLogoSuccessMsg(null), 3000);
+  };
+
   const handleSaveLogo = async () => {
-    const finalUrl = logoUrl.trim() || '/logo.svg';
+    const finalLogo = logoUrl.trim() || '/logo.svg';
+    const finalFavicon = useLogoAsFavicon 
+      ? finalLogo 
+      : (faviconUrl.trim() || '/favicon.svg');
+
     setIsSavingLogo(true);
     setLogoErrorMsg(null);
     setLogoSuccessMsg(null);
@@ -254,28 +305,33 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
       const currentInfo = propPkbmInfo || getPKBMInfo();
       const updatedInfo: PKBMInfo = {
         ...currentInfo,
-        logoUrl: finalUrl
+        logoUrl: finalLogo,
+        faviconUrl: finalFavicon,
+        useLogoAsFavicon: useLogoAsFavicon
       };
 
       // 1. Save to local storage and upsert to Supabase online database
       const isOnlineSynced = await savePKBMInfo(updatedInfo);
       setPkbmInfo(updatedInfo);
 
-      // 2. Notify parent component
+      // 2. Immediately update favicon in the current browser tab
+      updateDocumentFavicon(finalFavicon);
+
+      // 3. Notify parent component
       if (onPkbmInfoChanged) {
         onPkbmInfoChanged(updatedInfo);
       }
 
-      // 3. Inform user of online synchronization status
+      // 4. Inform user of online synchronization status
       if (isOnlineSynced) {
-        setLogoSuccessMsg('✓ Logo lembaga PKBM berhasil disimpan & disinkronkan ke Supabase Cloud! Logo otomatis tampil di semua komputer dan HP.');
-        setToastMessage('✓ Logo tersinkron ke semua komputer!');
+        setLogoSuccessMsg('✓ Logo dan Favicon berhasil disimpan & disinkronkan ke Supabase Cloud! Ikon browser tab dan logo aplikasi langsung aktif di semua komputer dan HP.');
+        setToastMessage('✓ Logo & Favicon tersinkron!');
       } else {
-        setLogoSuccessMsg('Logo tersimpan di perangkat ini. Namun gagal terhubung ke Supabase Cloud. Silakan periksa koneksi internet atau status Supabase.');
-        setToastMessage('Logo tersimpan lokal');
+        setLogoSuccessMsg('Logo & Favicon tersimpan di perangkat ini (tersimpan lokal).');
+        setToastMessage('Logo & Favicon tersimpan lokal');
       }
     } catch (err: any) {
-      setLogoErrorMsg('Terjadi kesalahan saat menyimpan logo: ' + (err?.message || 'Error'));
+      setLogoErrorMsg('Terjadi kesalahan saat menyimpan logo & favicon: ' + (err?.message || 'Error'));
     } finally {
       setIsSavingLogo(false);
       setTimeout(() => {
@@ -285,33 +341,42 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
   };
 
   const handleResetToDefaultLogo = async () => {
-    const defaultUrl = '/logo.svg';
+    const defaultLogo = '/logo.svg';
+    const defaultFavicon = '/favicon.svg';
     setIsSavingLogo(true);
     setLogoErrorMsg(null);
     setLogoSuccessMsg(null);
 
     try {
-      setLogoUrl(defaultUrl);
+      setLogoUrl(defaultLogo);
       setLogoInputUrl('');
+      setFaviconUrl(defaultFavicon);
+      setFaviconInputUrl('');
+      setUseLogoAsFavicon(true);
+
       const currentInfo = propPkbmInfo || getPKBMInfo();
       const updatedInfo: PKBMInfo = {
         ...currentInfo,
-        logoUrl: defaultUrl
+        logoUrl: defaultLogo,
+        faviconUrl: defaultFavicon,
+        useLogoAsFavicon: true
       };
       const isOnlineSynced = await savePKBMInfo(updatedInfo);
       setPkbmInfo(updatedInfo);
+      updateDocumentFavicon(defaultFavicon);
+
       if (onPkbmInfoChanged) {
         onPkbmInfoChanged(updatedInfo);
       }
 
       if (isOnlineSynced) {
-        setLogoSuccessMsg('✓ Logo dikembalikan ke logo default resmi PKBM Bina Insani dan disinkronkan ke seluruh komputer.');
-        setToastMessage('Logo kembali ke default resmi');
+        setLogoSuccessMsg('✓ Logo dan Favicon dikembalikan ke standar resmi PKBM Bina Insani dan disinkronkan ke seluruh komputer.');
+        setToastMessage('Logo & Favicon kembali ke default resmi');
       } else {
-        setLogoSuccessMsg('Logo default diterapkan secara lokal.');
+        setLogoSuccessMsg('Logo & Favicon default diterapkan secara lokal.');
       }
     } catch (err: any) {
-      setLogoErrorMsg('Gagal mereset logo: ' + (err?.message || 'Error'));
+      setLogoErrorMsg('Gagal mereset logo & favicon: ' + (err?.message || 'Error'));
     } finally {
       setIsSavingLogo(false);
       setTimeout(() => setLogoSuccessMsg(null), 3500);
@@ -378,24 +443,38 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
         </div>
       )}
 
-      {/* Pengaturan Logo Lembaga & Kop Laporan */}
+      {/* Pengaturan Logo Lembaga & Favicon Aplikasi */}
       <div className="bg-gradient-to-r from-slate-900 to-indigo-950 text-white p-4 sm:p-5 rounded-2xl shadow-md border border-slate-800 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
-            <div className="w-14 h-14 rounded-2xl bg-white p-1.5 flex items-center justify-center shrink-0 border-2 border-amber-400 shadow-md">
-              <img 
-                src={logoUrl || '/logo.svg'} 
-                alt="Logo Lembaga" 
-                className="w-full h-full object-contain"
-              />
+            <div className="relative">
+              <div className="w-14 h-14 rounded-2xl bg-white p-1.5 flex items-center justify-center shrink-0 border-2 border-amber-400 shadow-md">
+                <img 
+                  src={logoUrl || '/logo.svg'} 
+                  alt="Logo Lembaga" 
+                  className="w-full h-full object-contain"
+                />
+              </div>
+              {/* Badge mini preview favicon */}
+              <div 
+                className="absolute -bottom-1 -right-1 w-6 h-6 rounded-lg bg-slate-900 p-0.5 border border-amber-400 shadow-sm flex items-center justify-center"
+                title="Favicon Aktif"
+              >
+                <img 
+                  src={useLogoAsFavicon ? (logoUrl || '/logo.svg') : (faviconUrl || '/favicon.svg')} 
+                  alt="Favicon" 
+                  className="w-full h-full object-contain rounded-md"
+                />
+              </div>
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h4 className="font-extrabold text-sm sm:text-base text-white">Logo Lembaga & Kop Dokumen</h4>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h4 className="font-extrabold text-sm sm:text-base text-white">Logo Lembaga & Favicon Aplikasi</h4>
                 <span className="text-[10px] bg-emerald-400 text-slate-950 font-black px-2 py-0.5 rounded-full uppercase">Kustomisasi</span>
+                <span className="text-[10px] bg-blue-500/30 text-blue-300 font-bold px-2 py-0.5 rounded-full border border-blue-400/40">Browser & Mobile</span>
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
-                Ganti logo resmi PKBM yang tampil pada Header, Halaman Login, dan Kop Dokumen Cetak/Download Rekapitulasi.
+                Ganti logo resmi PKBM untuk Header, Login, Rekapitulasi, sekaligus atur favicon tab browser dan ikon aplikasi Android & iPhone.
               </p>
             </div>
           </div>
@@ -406,11 +485,11 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
             className="px-4 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-1.5 shrink-0"
           >
             <Camera className="w-4 h-4" />
-            <span>{isLogoOpen ? 'Tutup Pengaturan Logo' : 'Ganti Logo Lembaga'}</span>
+            <span>{isLogoOpen ? 'Tutup Pengaturan Logo & Favicon' : 'Ganti Logo & Favicon'}</span>
           </button>
         </div>
 
-        {/* Logo Customization Panel */}
+        {/* Logo & Favicon Customization Panel */}
         {isLogoOpen && (
           <div className="bg-slate-800/90 p-4 sm:p-5 rounded-xl border border-slate-700 space-y-4 text-xs animate-in fade-in zoom-in-95 duration-200">
             {logoSuccessMsg && (
@@ -426,8 +505,9 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
               </div>
             )}
 
+            {/* BAGIAN 1: PENGATURAN LOGO UTAMA */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Option A: Upload File */}
+              {/* Option A: Upload File Logo */}
               <div className="space-y-2 bg-slate-900/80 p-3.5 rounded-xl border border-slate-700">
                 <label className="block font-bold text-amber-300 text-[11px] uppercase tracking-wider flex items-center gap-1.5">
                   <Upload className="w-3.5 h-3.5" />
@@ -464,7 +544,7 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
                 <div className="space-y-2">
                   <label className="block font-bold text-blue-300 text-[11px] uppercase tracking-wider flex items-center gap-1.5">
                     <ImageIcon className="w-3.5 h-3.5" />
-                    <span>2. Atau Tempel URL Gambar</span>
+                    <span>2. Atau Tempel URL Gambar Logo</span>
                   </label>
                   <p className="text-[11px] text-slate-400">
                     Masukkan alamat link URL logo eksternal yang dapat diakses langsung.
@@ -482,6 +562,9 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
                       onClick={() => {
                         if (logoInputUrl.trim()) {
                           setLogoUrl(logoInputUrl.trim());
+                          if (useLogoAsFavicon) {
+                            setFaviconUrl(logoInputUrl.trim());
+                          }
                           setLogoErrorMsg(null);
                         }
                       }}
@@ -512,8 +595,192 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
                     className="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-slate-200 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition"
                   >
                     <RefreshCw className={`w-3 h-3 ${isSavingLogo ? 'animate-spin' : ''}`} />
-                    <span>Logo Default</span>
+                    <span>Kembali ke Logo & Favicon Resmi</span>
                   </button>
+                </div>
+              </div>
+            </div>
+
+            {/* BAGIAN 2: PENGATURAN FAVICON & IKON TAB BROWSER */}
+            <div className="bg-slate-900/95 p-4 rounded-xl border border-slate-700 space-y-3.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-slate-700/80">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-1.5 bg-blue-500/20 text-blue-400 rounded-lg border border-blue-500/30 shrink-0">
+                    <Globe className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h5 className="font-extrabold text-white text-xs sm:text-sm flex items-center gap-2">
+                      <span>Pengaturan Favicon & Ikon Tab Browser</span>
+                      <span className="text-[10px] bg-blue-400/20 text-blue-300 font-bold px-2 py-0.5 rounded-full border border-blue-400/30">
+                        Web & Mobile App
+                      </span>
+                    </h5>
+                    <p className="text-[11px] text-slate-400">
+                      Favicon adalah ikon kecil di samping judul tab browser (Google Chrome, Safari, Edge) dan ikon aplikasi saat dipasang ke layar HP Android / iPhone.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Checkbox: Sinkron Otomatis dengan Logo Lembaga */}
+              <label className="flex items-start gap-3 p-3 bg-slate-800/90 hover:bg-slate-800 rounded-xl border border-slate-700 cursor-pointer transition">
+                <input
+                  type="checkbox"
+                  checked={useLogoAsFavicon}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setUseLogoAsFavicon(checked);
+                    if (checked) {
+                      setFaviconUrl(logoUrl);
+                    }
+                  }}
+                  className="mt-0.5 w-4 h-4 text-emerald-500 rounded border-slate-600 focus:ring-emerald-400 focus:ring-offset-slate-900 cursor-pointer"
+                />
+                <div className="space-y-0.5">
+                  <span className="font-bold text-white text-xs flex items-center gap-1.5">
+                    <span>Gunakan Logo Lembaga di atas secara otomatis sebagai Favicon & Ikon Aplikasi</span>
+                    {useLogoAsFavicon && (
+                      <span className="text-[10px] text-emerald-400 bg-emerald-500/20 px-1.5 py-0.2 rounded font-mono">
+                        (Aktif Otomatis)
+                      </span>
+                    )}
+                  </span>
+                  <p className="text-[11px] text-slate-400">
+                    Jika dicentang, setiap kali Anda mengganti logo lembaga di atas, favicon tab browser dan ikon aplikasi HP akan otomatis mengikuti gambar logo tersebut.
+                  </p>
+                </div>
+              </label>
+
+              {/* Opsi Kustomisasi Favicon Khusus (jika pengguna ingin favicon terpisah/mandiri) */}
+              {!useLogoAsFavicon && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1 animate-in fade-in duration-200">
+                  {/* Unggah File Khusus Favicon */}
+                  <div className="space-y-2 bg-slate-800/60 p-3 rounded-xl border border-slate-700">
+                    <label className="block font-bold text-blue-300 text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+                      <Upload className="w-3 h-3" />
+                      <span>Unggah Gambar Favicon Khusus</span>
+                    </label>
+                    <p className="text-[10px] text-slate-400">
+                      Disarankan gambar rasio persegi (1:1), format PNG transparan, SVG, atau ICO (resolusi 64x64 atau 128x128 piksel).
+                    </p>
+                    <label className="cursor-pointer border border-dashed border-slate-600 hover:border-blue-400 hover:bg-slate-700/50 rounded-lg p-3 flex flex-col items-center justify-center gap-1.5 text-center transition-all block">
+                      {isProcessingFavicon ? (
+                        <RefreshCw className="w-5 h-5 text-blue-400 animate-spin" />
+                      ) : (
+                        <Upload className="w-5 h-5 text-blue-400" />
+                      )}
+                      <span className="font-bold text-white text-[11px]">
+                        {isProcessingFavicon ? 'Memproses & Memotong Favicon...' : 'Pilih Berkas Favicon (PNG/SVG/ICO)'}
+                      </span>
+                      <input
+                        type="file"
+                        disabled={isProcessingFavicon || isSavingLogo}
+                        accept="image/png, image/jpeg, image/svg+xml, image/x-icon, image/webp"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleFaviconFileUpload(file);
+                        }}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+
+                  {/* Tempel URL Favicon Khusus */}
+                  <div className="space-y-2 bg-slate-800/60 p-3 rounded-xl border border-slate-700 flex flex-col justify-between">
+                    <div className="space-y-1.5">
+                      <label className="block font-bold text-indigo-300 text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+                        <ImageIcon className="w-3 h-3" />
+                        <span>Atau Tempel URL Favicon Khusus</span>
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={faviconInputUrl}
+                          onChange={(e) => setFaviconInputUrl(e.target.value)}
+                          placeholder="https://... atau /favicon.svg"
+                          className="w-full bg-slate-900 border border-slate-600 rounded-lg p-1.5 font-mono text-white outline-none focus:ring-2 focus:ring-indigo-400 text-xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (faviconInputUrl.trim()) {
+                              setFaviconUrl(faviconInputUrl.trim());
+                              setUseLogoAsFavicon(false);
+                              setLogoErrorMsg(null);
+                            }
+                          }}
+                          className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg shrink-0 text-[11px]"
+                        >
+                          Pakai URL
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-700/80 flex items-center justify-between">
+                      <span className="text-[10px] text-slate-400">Favicon Standar:</span>
+                      <button
+                        type="button"
+                        onClick={handleResetToDefaultFavicon}
+                        className="px-2.5 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded text-[10px] font-bold flex items-center gap-1 transition"
+                      >
+                        <RefreshCw className="w-2.5 h-2.5" />
+                        <span>Favicon Resmi PKBM</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Pratinjau Interaktif Favicon & Ikon Mobile */}
+              <div className="pt-2.5 border-t border-slate-700/80 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* 1. Mockup Tab Browser Chrome / Edge */}
+                <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
+                      <Globe className="w-3 h-3 text-blue-400" />
+                      <span>Simulasi Tab Peramban (Browser):</span>
+                    </span>
+                    <span className="text-[9px] text-emerald-400 font-mono">Live Preview</span>
+                  </div>
+                  {/* Mini browser tab UI */}
+                  <div className="bg-slate-800 rounded-lg p-1.5 flex items-center gap-2 border border-slate-700/70 shadow-inner">
+                    <div className="w-5 h-5 rounded bg-white p-0.5 flex items-center justify-center shrink-0 shadow-sm border border-slate-300">
+                      <img 
+                        src={useLogoAsFavicon ? (logoUrl || '/logo.svg') : (faviconUrl || '/favicon.svg')} 
+                        alt="Favicon Tab" 
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                    <div className="truncate text-[11px] font-semibold text-slate-200">
+                      Presensi Tutor - PKBM Bina Insani
+                    </div>
+                    <span className="ml-auto text-slate-500 text-[10px] px-1">✕</span>
+                  </div>
+                </div>
+
+                {/* 2. Mockup Ikon HP Android & iPhone */}
+                <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
+                      <Smartphone className="w-3 h-3 text-emerald-400" />
+                      <span>Simulasi Ikon Layar HP (Android/iOS):</span>
+                    </span>
+                    <span className="text-[9px] text-slate-400">Home Screen</span>
+                  </div>
+                  {/* Mini phone screen icon UI */}
+                  <div className="flex items-center gap-2.5 bg-slate-800/60 p-1.5 rounded-lg border border-slate-700/60">
+                    <div className="w-8 h-8 rounded-xl bg-white p-1 flex items-center justify-center shrink-0 border border-slate-300 shadow-md">
+                      <img 
+                        src={useLogoAsFavicon ? (logoUrl || '/logo.svg') : (faviconUrl || '/favicon.svg')} 
+                        alt="App Icon" 
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-bold text-white leading-tight">Presensi PKBM</p>
+                      <p className="text-[9px] text-slate-400">Aplikasi Android & iPhone</p>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -530,7 +797,7 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
               <button
                 type="button"
                 onClick={handleSaveLogo}
-                disabled={isSavingLogo || isProcessingImage}
+                disabled={isSavingLogo || isProcessingImage || isProcessingFavicon}
                 className="px-6 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 rounded-xl font-extrabold shadow-md flex items-center gap-1.5 transition"
               >
                 {isSavingLogo ? (
@@ -541,7 +808,7 @@ export const MasterDataModal: React.FC<MasterDataModalProps> = ({
                 ) : (
                   <>
                     <Check className="w-4 h-4" />
-                    <span>Terapkan & Simpan Logo Baru</span>
+                    <span>Terapkan & Simpan Logo & Favicon</span>
                   </>
                 )}
               </button>
