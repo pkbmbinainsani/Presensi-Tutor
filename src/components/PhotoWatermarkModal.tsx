@@ -90,8 +90,8 @@ export const PhotoWatermarkModal: React.FC<PhotoWatermarkModalProps> = ({ record
               className="max-h-[60vh] sm:max-h-[65vh] w-auto max-w-full object-contain mx-auto rounded-xl transition-all duration-300"
             />
 
-            {/* Official Stamped Watermark Banner (Adaptive to Portrait or Landscape) */}
-            <div className="w-full bg-gradient-to-t from-slate-950 via-slate-950/90 to-transparent p-3 sm:p-4 text-white">
+            {/* Official Stamped Info Bar */}
+            <div className="w-full bg-slate-900 border-t border-slate-800 p-3 sm:p-4 text-white">
               <div className="border-l-4 border-emerald-500 pl-3 py-0.5 space-y-1">
                 <div className="flex items-center justify-between text-[11px] sm:text-xs font-black text-emerald-400 tracking-wide uppercase">
                   <span>PKBM BINA INSANI SUMOWONO</span>

@@ -3,12 +3,75 @@
   <head>
     <script>
       (function() {
+        // 1. Intercept WebSocket for Vite HMR to prevent benign connection errors in AI Studio iframe
+        if (typeof window !== 'undefined' && window.WebSocket) {
+          const NativeWebSocket = window.WebSocket;
+
+          class QuietViteWebSocket extends EventTarget {
+            constructor(url, protocols) {
+              super();
+              this.url = String(url || '');
+              this.protocol = 'vite-hmr';
+              this.extensions = '';
+              this.bufferedAmount = 0;
+              this.binaryType = 'blob';
+              this.CONNECTING = 0;
+              this.OPEN = 1;
+              this.CLOSING = 2;
+              this.CLOSED = 3;
+              this.readyState = 1; // Mark immediately OPEN to satisfy Vite client without waiting
+
+              this.onopen = null;
+              this.onmessage = null;
+              this.onerror = null;
+              this.onclose = null;
+            }
+
+            send(data) {}
+
+            close(code, reason) {
+              this.readyState = 3;
+              const ev = new Event('close');
+              this.dispatchEvent(ev);
+              if (typeof this.onclose === 'function') {
+                this.onclose(ev);
+              }
+            }
+          }
+
+          QuietViteWebSocket.CONNECTING = 0;
+          QuietViteWebSocket.OPEN = 1;
+          QuietViteWebSocket.CLOSING = 2;
+          QuietViteWebSocket.CLOSED = 3;
+
+          function WebSocketProxy(url, protocols) {
+            const isViteHmr = (protocols === 'vite-hmr') ||
+              (Array.isArray(protocols) && protocols.includes('vite-hmr')) ||
+              (typeof url === 'string' && (url.includes('vite') || url.includes('token=')));
+            if (isViteHmr) {
+              return new QuietViteWebSocket(url, protocols);
+            }
+            return new NativeWebSocket(url, protocols);
+          }
+
+          WebSocketProxy.CONNECTING = 0;
+          WebSocketProxy.OPEN = 1;
+          WebSocketProxy.CLOSING = 2;
+          WebSocketProxy.CLOSED = 3;
+          WebSocketProxy.prototype = NativeWebSocket.prototype;
+          window.WebSocket = WebSocketProxy;
+        }
+
+        // 2. Filter console and window error events for any residual [vite] messages
         const filterVite = function(originalFn) {
           return function(...args) {
             const fullMsg = args.map(arg => {
               if (typeof arg === 'string') return arg;
               if (arg && arg.message) return arg.message;
-              return '';
+              if (arg && typeof arg === 'object') {
+                try { return JSON.stringify(arg); } catch (e) { return ''; }
+              }
+              return String(arg || '');
             }).join(' ');
             if (fullMsg.includes('[vite]') || fullMsg.toLowerCase().includes('websocket')) {
               return;
@@ -16,11 +79,24 @@
             return originalFn.apply(console, args);
           };
         };
+
         console.error = filterVite(console.error);
         console.warn = filterVite(console.warn);
+        console.info = filterVite(console.info);
+        console.log = filterVite(console.log);
+        console.debug = filterVite(console.debug);
 
         window.addEventListener('error', function(event) {
-          if (event && event.message && (event.message.includes('[vite]') || event.message.toLowerCase().includes('websocket'))) {
+          const msg = (event && (event.message || (event.error && event.error.message))) || '';
+          if (msg.includes('[vite]') || msg.toLowerCase().includes('websocket')) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function(event) {
+          const reason = event && (event.reason ? (event.reason.message || String(event.reason)) : '');
+          if (reason.includes('[vite]') || reason.toLowerCase().includes('websocket')) {
             event.preventDefault();
             event.stopImmediatePropagation();
           }

@@ -421,87 +421,160 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
         ctx.setTransform(1, 0, 0, 1, 0, 0);
       }
 
-      // 2. High-resolution stamped watermark matching orientation
+      // 2. High-resolution stamped watermark matching orientation (without obstructive black banner)
       const scale = vw / 1000;
       const bannerHeight = isPort ? Math.round(180 * scale) : Math.round(135 * scale);
+      const textX = Math.round(24 * scale);
 
-      // Dark gradient banner at the bottom
-      const gradient = ctx.createLinearGradient(0, vh - bannerHeight - 40, 0, vh);
-      gradient.addColorStop(0, 'rgba(2, 6, 23, 0)');
-      gradient.addColorStop(0.25, 'rgba(2, 6, 23, 0.82)');
-      gradient.addColorStop(1, 'rgba(2, 6, 23, 0.98)');
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, vh - bannerHeight - 40, vw, bannerHeight + 40);
+      // Helper to render high-contrast watermark text with outer edge (stroke outline) and soft drop shadow
+      // This completely removes the black background banner so the photo is 100% visible,
+      // while guaranteeing crisp readability over any background (light or dark).
+      const drawTextWithEdgeAndShadow = (
+        text: string,
+        x: number,
+        y: number,
+        font: string,
+        fillColor: string,
+        strokeWidth = Math.max(3, Math.round(4 * scale))
+      ) => {
+        ctx.save();
+        ctx.font = font;
 
-      // Emerald accent indicator
-      const paddingLeft = Math.round(24 * scale);
-      ctx.fillStyle = '#10b981'; // emerald-500
-      ctx.fillRect(paddingLeft, vh - bannerHeight + Math.round(12 * scale), Math.round(6 * scale), bannerHeight - Math.round(30 * scale));
+        // 1. Crisp black outline (edge) with soft drop shadow
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
+        ctx.shadowBlur = Math.max(4, Math.round(6 * scale));
+        ctx.shadowOffsetX = Math.round(1.5 * scale);
+        ctx.shadowOffsetY = Math.round(2 * scale);
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = strokeWidth;
+        ctx.lineJoin = 'round';
+        ctx.miterLimit = 2;
+        ctx.strokeText(text, x, y);
 
-      const textX = paddingLeft + Math.round(18 * scale);
+        // 2. Vibrant inner fill
+        ctx.shadowColor = 'transparent';
+        ctx.fillStyle = fillColor;
+        ctx.fillText(text, x, y);
+
+        ctx.restore();
+      };
 
       if (isPort) {
-        // --- PORTRAIT ORIENTATION WATERMARK (Stacked Lines) ---
-        ctx.fillStyle = '#34d399'; // emerald-400
-        ctx.font = `bold ${Math.round(18 * scale)}px sans-serif`;
-        ctx.fillText('PKBM BINA INSANI SUMOWONO • VERIFIED GPS', textX, vh - bannerHeight + Math.round(32 * scale));
+        // --- PORTRAIT ORIENTATION WATERMARK (Stacked Lines with edge & shadow) ---
+        drawTextWithEdgeAndShadow(
+          'PKBM BINA INSANI SUMOWONO • VERIFIED GPS',
+          textX,
+          vh - bannerHeight + Math.round(32 * scale),
+          `bold ${Math.round(18 * scale)}px sans-serif`,
+          '#4ade80',
+          Math.max(3, Math.round(4 * scale))
+        );
 
-        ctx.fillStyle = '#ffffff';
-        ctx.font = `bold ${Math.round(22 * scale)}px sans-serif`;
         const tutorTitle = `${selectedTutorObj?.name || 'Tutor'} • ${program || 'Pendidikan Kesetaraan'}`;
-        ctx.fillText(tutorTitle, textX, vh - bannerHeight + Math.round(64 * scale));
+        drawTextWithEdgeAndShadow(
+          tutorTitle,
+          textX,
+          vh - bannerHeight + Math.round(64 * scale),
+          `bold ${Math.round(22 * scale)}px sans-serif`,
+          '#ffffff',
+          Math.max(3.5, Math.round(4.5 * scale))
+        );
 
-        ctx.fillStyle = '#cbd5e1'; // slate-300
-        ctx.font = `600 ${Math.round(16 * scale)}px sans-serif`;
         const mapelText = `${subjectTitle || 'Kegiatan Pembelajaran'} • ${classGroup || 'Kelompok Belajar'}`;
-        ctx.fillText(mapelText, textX, vh - bannerHeight + Math.round(94 * scale));
+        drawTextWithEdgeAndShadow(
+          mapelText,
+          textX,
+          vh - bannerHeight + Math.round(94 * scale),
+          `600 ${Math.round(16 * scale)}px sans-serif`,
+          '#f8fafc',
+          Math.max(3, Math.round(3.8 * scale))
+        );
 
         const currentTimeWib = getWibTimeWithSuffix(new Date(), false);
-
-        ctx.fillStyle = '#fbbf24'; // amber-400
-        ctx.font = `bold ${Math.round(15 * scale)}px sans-serif`;
         const timeStr = `📅 ${formatWibDateIndo(date, 'withDay')} • ⏰ ${currentTimeWib} WIB`;
-        ctx.fillText(timeStr, textX, vh - bannerHeight + Math.round(122 * scale));
+        drawTextWithEdgeAndShadow(
+          timeStr,
+          textX,
+          vh - bannerHeight + Math.round(122 * scale),
+          `bold ${Math.round(15 * scale)}px sans-serif`,
+          '#fde047',
+          Math.max(2.8, Math.round(3.5 * scale))
+        );
 
-        ctx.fillStyle = '#93c5fd'; // blue-300
-        ctx.font = `${Math.round(13.5 * scale)}px monospace`;
         const gpsStr = `📍 Lat: ${geoLocation ? geoLocation.latitude.toFixed(5) : '-'}, Lng: ${geoLocation ? geoLocation.longitude.toFixed(5) : '-'} (±${geoLocation?.accuracy || 0}m) • ${geoLocation?.isWithinRadius ? 'Radius Valid' : dutyType === 'Dinas Luar' ? 'Dinas Luar' : 'Luar Radius'}`;
-        ctx.fillText(gpsStr, textX, vh - bannerHeight + Math.round(148 * scale));
+        drawTextWithEdgeAndShadow(
+          gpsStr,
+          textX,
+          vh - bannerHeight + Math.round(148 * scale),
+          `bold ${Math.round(13.5 * scale)}px monospace`,
+          '#7dd3fc',
+          Math.max(2.8, Math.round(3.5 * scale))
+        );
       } else {
-        // --- LANDSCAPE ORIENTATION WATERMARK (Two Columns) ---
+        // --- LANDSCAPE ORIENTATION WATERMARK (Two Columns with edge & shadow) ---
         const currentTimeWib = getWibTimeWithSuffix(new Date(), false);
 
         // Left Column
-        ctx.fillStyle = '#34d399';
-        ctx.font = `bold ${Math.round(17 * scale)}px sans-serif`;
-        ctx.fillText('PKBM BINA INSANI SUMOWONO • VERIFIED GPS', textX, vh - bannerHeight + Math.round(32 * scale));
+        drawTextWithEdgeAndShadow(
+          'PKBM BINA INSANI SUMOWONO • VERIFIED GPS',
+          textX,
+          vh - bannerHeight + Math.round(32 * scale),
+          `bold ${Math.round(17 * scale)}px sans-serif`,
+          '#4ade80',
+          Math.max(3, Math.round(4 * scale))
+        );
 
-        ctx.fillStyle = '#ffffff';
-        ctx.font = `bold ${Math.round(22 * scale)}px sans-serif`;
         const tutorTitle = `${selectedTutorObj?.name || 'Tutor'} • ${program || 'Pendidikan Kesetaraan'}`;
-        ctx.fillText(tutorTitle, textX, vh - bannerHeight + Math.round(65 * scale));
+        drawTextWithEdgeAndShadow(
+          tutorTitle,
+          textX,
+          vh - bannerHeight + Math.round(65 * scale),
+          `bold ${Math.round(22 * scale)}px sans-serif`,
+          '#ffffff',
+          Math.max(3.5, Math.round(4.5 * scale))
+        );
 
-        ctx.fillStyle = '#cbd5e1';
-        ctx.font = `600 ${Math.round(16 * scale)}px sans-serif`;
         const mapelText = `${subjectTitle || 'Kegiatan Pembelajaran'} • ${classGroup || 'Kelompok Belajar'}`;
-        ctx.fillText(mapelText, textX, vh - bannerHeight + Math.round(96 * scale));
+        drawTextWithEdgeAndShadow(
+          mapelText,
+          textX,
+          vh - bannerHeight + Math.round(96 * scale),
+          `600 ${Math.round(16 * scale)}px sans-serif`,
+          '#f8fafc',
+          Math.max(3, Math.round(3.8 * scale))
+        );
 
         // Right Column
-        const rightColX = Math.round(vw * 0.54);
-        ctx.fillStyle = '#fbbf24';
-        ctx.font = `bold ${Math.round(16 * scale)}px sans-serif`;
+        const rightColX = Math.round(vw * 0.52);
         const timeStr = `📅 ${formatWibDateIndo(date, 'short')} • ⏰ ${currentTimeWib} WIB`;
-        ctx.fillText(timeStr, rightColX, vh - bannerHeight + Math.round(40 * scale));
+        drawTextWithEdgeAndShadow(
+          timeStr,
+          rightColX,
+          vh - bannerHeight + Math.round(40 * scale),
+          `bold ${Math.round(16 * scale)}px sans-serif`,
+          '#fde047',
+          Math.max(3, Math.round(3.8 * scale))
+        );
 
-        ctx.fillStyle = '#93c5fd';
-        ctx.font = `${Math.round(13.5 * scale)}px monospace`;
         const gpsStr = `📍 Lat: ${geoLocation?.latitude.toFixed(5) || '-'}, Lng: ${geoLocation?.longitude.toFixed(5) || '-'} (±${geoLocation?.accuracy || 0}m)`;
-        ctx.fillText(gpsStr, rightColX, vh - bannerHeight + Math.round(68 * scale));
+        drawTextWithEdgeAndShadow(
+          gpsStr,
+          rightColX,
+          vh - bannerHeight + Math.round(68 * scale),
+          `bold ${Math.round(13.5 * scale)}px monospace`,
+          '#7dd3fc',
+          Math.max(2.8, Math.round(3.5 * scale))
+        );
 
-        ctx.fillStyle = '#a7f3d0';
-        ctx.font = `bold ${Math.round(14 * scale)}px sans-serif`;
         const locName = `🏢 ${geoLocation?.matchedLocationName || 'Titik PKBM'} • ${geoLocation?.isWithinRadius ? 'Radius Sesuai' : dutyType === 'Dinas Luar' ? 'Dinas Luar' : 'Luar Radius'}`;
-        ctx.fillText(locName, rightColX, vh - bannerHeight + Math.round(96 * scale));
+        drawTextWithEdgeAndShadow(
+          locName,
+          rightColX,
+          vh - bannerHeight + Math.round(96 * scale),
+          `bold ${Math.round(14 * scale)}px sans-serif`,
+          '#86efac',
+          Math.max(2.8, Math.round(3.5 * scale))
+        );
       }
 
       const dataUrl = canvas.toDataURL('image/jpeg', 0.90);
