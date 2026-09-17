@@ -27,6 +27,7 @@ const STORAGE_KEYS = {
   CONFIG: 'pkbm_bina_insani_config_v2',
   LOCATIONS: 'pkbm_bina_insani_locations_v2',
   SCHEDULES: 'pkbm_bina_insani_schedules_v1',
+  SCHEDULES_INITIALIZED: 'pkbm_bina_insani_schedules_init_v1',
 };
 
 // Remove any lingering legacy dummy keys from older version v1
@@ -261,22 +262,44 @@ export function deleteClassLocation(id: string): void {
 // Jadwal Kegiatan Belajar Mengajar (KBM) Semester
 // -------------------------------------------------------------------
 
+export function deduplicateSchedules(list: ScheduleItem[]): ScheduleItem[] {
+  const seen = new Set<string>();
+  const result: ScheduleItem[] = [];
+  for (const item of list) {
+    const k = `${item.date}|${item.timeStart}|${item.timeEnd}|${(item.subjectTitle || '').toLowerCase().trim()}|${(item.classGroup || '').toLowerCase().trim()}|${(item.tutorName || '').toLowerCase().trim()}`;
+    if (!seen.has(k)) {
+      seen.add(k);
+      result.push(item);
+    }
+  }
+  return result;
+}
+
 export function generateSampleSemesterSchedules(): ScheduleItem[] {
   const csv = generateScheduleTemplateCsv();
   const parsed = parseScheduleCsv(csv, getTutors());
-  return parsed.items;
+  return deduplicateSchedules(parsed.items);
 }
 
 export function getSchedules(): ScheduleItem[] {
   try {
     const data = localStorage.getItem(STORAGE_KEYS.SCHEDULES);
-    if (!data) {
-      // Inisialisasi otomatis dengan contoh jadwal semester resmi PKBM Bina Insani
+    if (data === null) {
+      const isInitialized = localStorage.getItem(STORAGE_KEYS.SCHEDULES_INITIALIZED) === 'true';
+      if (isInitialized) {
+        return [];
+      }
+      // Inisialisasi otomatis hanya jika belum pernah diinisialisasi sama sekali
       const defaultSchedules = generateSampleSemesterSchedules();
       localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(defaultSchedules));
+      localStorage.setItem(STORAGE_KEYS.SCHEDULES_INITIALIZED, 'true');
       return defaultSchedules;
     }
     const parsed: ScheduleItem[] = JSON.parse(data);
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return [];
+    }
+
     let needsUpdate = false;
     const today = getWibToday();
     const validated = parsed.map(item => {
@@ -297,10 +320,12 @@ export function getSchedules(): ScheduleItem[] {
       }
       return item;
     });
-    if (needsUpdate) {
-      saveSchedules(validated);
+
+    const deduplicated = deduplicateSchedules(validated);
+    if (needsUpdate || deduplicated.length !== validated.length) {
+      localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(deduplicated));
     }
-    return validated;
+    return deduplicated;
   } catch (error) {
     console.warn('Note reading schedules cache:', error);
     return [];
@@ -308,8 +333,10 @@ export function getSchedules(): ScheduleItem[] {
 }
 
 export function saveSchedules(schedules: ScheduleItem[]): void {
-  localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(schedules));
-  saveAllSchedulesOnline(schedules, true).catch(err => {
+  const deduplicated = deduplicateSchedules(schedules);
+  localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(deduplicated));
+  localStorage.setItem(STORAGE_KEYS.SCHEDULES_INITIALIZED, 'true');
+  saveAllSchedulesOnline(deduplicated, true).catch(err => {
     console.warn('Sync error saveAllSchedulesOnline:', err);
   });
 }
@@ -320,8 +347,9 @@ export function addScheduleItem(item: Omit<ScheduleItem, 'id'>): ScheduleItem {
     ...item,
     id: `sch-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`
   };
-  const updated = [newItem, ...schedules];
+  const updated = deduplicateSchedules([newItem, ...schedules]);
   localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(updated));
+  localStorage.setItem(STORAGE_KEYS.SCHEDULES_INITIALIZED, 'true');
   upsertScheduleOnline(newItem).catch(err => {
     console.warn('Sync error upsertScheduleOnline:', err);
   });
@@ -334,27 +362,41 @@ export function updateScheduleItem(item: ScheduleItem): void {
   if (idx !== -1) {
     const updated = [...schedules];
     updated[idx] = item;
-    localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(updated));
+    const cleanUpdated = deduplicateSchedules(updated);
+    localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(cleanUpdated));
+    localStorage.setItem(STORAGE_KEYS.SCHEDULES_INITIALIZED, 'true');
     upsertScheduleOnline(item).catch(err => {
       console.warn('Sync error upsertScheduleOnline:', err);
     });
   }
 }
 
-export function deleteScheduleItem(id: string): void {
+export async function deleteScheduleItem(
+  id: string,
+  matchFilter?: { date?: string; timeStart?: string; subjectTitle?: string; classGroup?: string; tutorName?: string }
+): Promise<boolean> {
   const schedules = getSchedules();
+  const targetItem = schedules.find(s => s.id === id);
   const updated = schedules.filter(s => s.id !== id);
+
   localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(updated));
-  deleteScheduleOnline(id).catch(err => {
-    console.warn('Sync error deleteScheduleOnline:', err);
-  });
+  localStorage.setItem(STORAGE_KEYS.SCHEDULES_INITIALIZED, 'true');
+
+  const filter = matchFilter || (targetItem ? {
+    date: targetItem.date,
+    timeStart: targetItem.timeStart,
+    subjectTitle: targetItem.subjectTitle,
+    classGroup: targetItem.classGroup,
+    tutorName: targetItem.tutorName,
+  } : undefined);
+
+  return await deleteScheduleOnline(id, filter);
 }
 
-export function clearAllSchedules(): void {
+export async function clearAllSchedules(): Promise<boolean> {
   localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify([]));
-  clearAllSchedulesOnline().catch(err => {
-    console.warn('Sync error clearAllSchedulesOnline:', err);
-  });
+  localStorage.setItem(STORAGE_KEYS.SCHEDULES_INITIALIZED, 'true');
+  return await clearAllSchedulesOnline();
 }
 
 export function resetToDefaultData(): void {
@@ -424,20 +466,12 @@ export async function syncAllWithSupabase(): Promise<{
     }
 
     if (onlineSchedules !== null) {
-      if (onlineSchedules.length > 0) {
-        loadedSchedules = onlineSchedules;
-        localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(onlineSchedules));
-        usedOnline = true;
-      } else if (onlineSchedules.length === 0 && loadedSchedules.length > 0) {
-        // Table exists but is empty online, auto-upload current local schedules
-        saveAllSchedulesOnline(loadedSchedules, false).catch(err => {
-          console.warn('Auto-upload schedules to Supabase note:', err);
-        });
-      } else {
-        loadedSchedules = [];
-        localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify([]));
-        usedOnline = true;
-      }
+      // Supabase adalah satu-satunya sumber kebenaran (Source of Truth)
+      const deduplicated = deduplicateSchedules(onlineSchedules);
+      loadedSchedules = deduplicated;
+      localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(deduplicated));
+      localStorage.setItem(STORAGE_KEYS.SCHEDULES_INITIALIZED, 'true');
+      usedOnline = true;
     }
 
     return {

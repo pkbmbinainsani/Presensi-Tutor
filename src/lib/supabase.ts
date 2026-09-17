@@ -558,6 +558,18 @@ export async function upsertPKBMInfoOnline(info: PKBMInfo): Promise<boolean> {
 // -------------------------------------------------------------
 // Schedules (Jadwal KBM 1 Semester Berbasis Tanggal)
 // -------------------------------------------------------------
+
+// Mutation lock to prevent self-triggering realtime sync loops
+let scheduleMutationLockUntil = 0;
+
+export function setScheduleMutationInProgress(durationMs = 2500): void {
+  scheduleMutationLockUntil = Date.now() + durationMs;
+}
+
+export function isScheduleMutationInProgress(): boolean {
+  return Date.now() < scheduleMutationLockUntil;
+}
+
 export async function fetchSchedulesOnline(): Promise<ScheduleItem[] | null> {
   try {
     const { data, error } = await supabase
@@ -571,7 +583,21 @@ export async function fetchSchedulesOnline(): Promise<ScheduleItem[] | null> {
       return null;
     }
     missingTablesSet.delete('schedules');
-    return (data || []).map(transformScheduleFromDb);
+
+    // Otomatis deduplikasi jika ada record duplikat lama di cloud
+    const rawList = (data || []).map(transformScheduleFromDb);
+    const seen = new Set<string>();
+    const deduplicated: ScheduleItem[] = [];
+
+    for (const item of rawList) {
+      const k = `${item.date}|${item.timeStart}|${item.timeEnd}|${(item.subjectTitle || '').toLowerCase().trim()}|${(item.classGroup || '').toLowerCase().trim()}|${(item.tutorName || '').toLowerCase().trim()}`;
+      if (!seen.has(k)) {
+        seen.add(k);
+        deduplicated.push(item);
+      }
+    }
+
+    return deduplicated;
   } catch (e) {
     handleTableError('fetch schedules exception', 'schedules', e);
     return null;
@@ -580,6 +606,7 @@ export async function fetchSchedulesOnline(): Promise<ScheduleItem[] | null> {
 
 export async function upsertScheduleOnline(item: ScheduleItem): Promise<boolean> {
   try {
+    setScheduleMutationInProgress(2000);
     const payload = transformScheduleToDb(item);
     const { error } = await supabase.from('schedules').upsert(payload);
     if (error) {
@@ -596,7 +623,20 @@ export async function upsertScheduleOnline(item: ScheduleItem): Promise<boolean>
 
 export async function saveAllSchedulesOnline(schedules: ScheduleItem[], replace: boolean = true): Promise<boolean> {
   try {
-    if (schedules.length === 0) {
+    setScheduleMutationInProgress(4000);
+
+    // Otomatis bersihkan duplikat sebelum upload
+    const seen = new Set<string>();
+    const cleanSchedules: ScheduleItem[] = [];
+    for (const s of schedules) {
+      const k = `${s.date}|${s.timeStart}|${s.timeEnd}|${(s.subjectTitle || '').toLowerCase().trim()}|${(s.classGroup || '').toLowerCase().trim()}|${(s.tutorName || '').toLowerCase().trim()}`;
+      if (!seen.has(k)) {
+        seen.add(k);
+        cleanSchedules.push(s);
+      }
+    }
+
+    if (cleanSchedules.length === 0) {
       if (replace) {
         const { error: delError } = await supabase
           .from('schedules')
@@ -613,8 +653,8 @@ export async function saveAllSchedulesOnline(schedules: ScheduleItem[], replace:
 
     // Insert / Upsert batch (pecah menjadi chunk maks 50 per batch untuk efisiensi)
     const chunkSize = 50;
-    for (let i = 0; i < schedules.length; i += chunkSize) {
-      const chunk = schedules.slice(i, i + chunkSize).map(transformScheduleToDb);
+    for (let i = 0; i < cleanSchedules.length; i += chunkSize) {
+      const chunk = cleanSchedules.slice(i, i + chunkSize).map(transformScheduleToDb);
       const { error: insertError } = await supabase
         .from('schedules')
         .upsert(chunk, { onConflict: 'id' });
@@ -628,7 +668,7 @@ export async function saveAllSchedulesOnline(schedules: ScheduleItem[], replace:
     // Jika replace: true, bersihkan item di cloud yang sudah tidak ada di list lokal
     if (replace) {
       try {
-        const currentIds = new Set(schedules.map(s => s.id));
+        const currentIds = new Set(cleanSchedules.map(s => s.id));
         const { data: existingRows } = await supabase
           .from('schedules')
           .select('id');
@@ -662,8 +702,14 @@ export async function saveAllSchedulesOnline(schedules: ScheduleItem[], replace:
   }
 }
 
-export async function deleteScheduleOnline(id: string): Promise<boolean> {
+export async function deleteScheduleOnline(
+  id: string, 
+  matchFilter?: { date?: string; timeStart?: string; subjectTitle?: string; classGroup?: string; tutorName?: string }
+): Promise<boolean> {
   try {
+    setScheduleMutationInProgress(3000);
+
+    // 1. Hapus berdasarkan ID utama
     const { error } = await supabase
       .from('schedules')
       .delete()
@@ -673,6 +719,29 @@ export async function deleteScheduleOnline(id: string): Promise<boolean> {
       handleTableError('delete schedule', 'schedules', error);
       return false;
     }
+
+    // 2. Jika disediakan matchFilter, bersihkan juga record duplikat identik di Supabase (jika ada)
+    if (matchFilter && matchFilter.date && matchFilter.timeStart && matchFilter.subjectTitle) {
+      try {
+        let query = supabase
+          .from('schedules')
+          .delete()
+          .eq('date', matchFilter.date)
+          .eq('time_start', formatTimeWibDisplay(matchFilter.timeStart))
+          .eq('subject_title', matchFilter.subjectTitle);
+
+        if (matchFilter.classGroup) {
+          query = query.eq('class_group', matchFilter.classGroup);
+        }
+        if (matchFilter.tutorName) {
+          query = query.eq('tutor_name', matchFilter.tutorName);
+        }
+        await query;
+      } catch (e) {
+        console.warn('Note on secondary duplicate clean:', e);
+      }
+    }
+
     missingTablesSet.delete('schedules');
     return true;
   } catch (e) {
@@ -683,6 +752,7 @@ export async function deleteScheduleOnline(id: string): Promise<boolean> {
 
 export async function clearAllSchedulesOnline(): Promise<boolean> {
   try {
+    setScheduleMutationInProgress(3000);
     const { error } = await supabase
       .from('schedules')
       .delete()
@@ -720,7 +790,11 @@ export function subscribeToSupabaseChanges(onChange: (table: string) => void): (
         onChange('pkbm_info');
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, () => {
-        onChange('schedules');
+        if (!isScheduleMutationInProgress()) {
+          onChange('schedules');
+        } else {
+          console.log('Skipping realtime reload for schedules because local mutation is in progress');
+        }
       })
       .subscribe();
 

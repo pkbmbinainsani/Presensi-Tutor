@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
   CalendarDays, 
   Upload, 
@@ -42,7 +42,8 @@ import {
   updateScheduleItem, 
   deleteScheduleItem, 
   clearAllSchedules, 
-  generateSampleSemesterSchedules 
+  generateSampleSemesterSchedules,
+  deduplicateSchedules
 } from '../lib/storage';
 import { saveAllSchedulesOnline, fetchSchedulesOnline } from '../lib/supabase';
 import { getWibToday, getDayNameFromDateStr } from '../lib/dateUtils';
@@ -52,7 +53,7 @@ interface AdminScheduleManagerProps {
   tutors: Tutor[];
   locations?: ClassLocation[];
   pkbmInfo: PKBMInfo;
-  onSchedulesUpdated: (updated: ScheduleItem[]) => void;
+  onSchedulesUpdated: (updated: ScheduleItem[], syncCloud?: boolean) => void;
   onOpenSupabaseStatus?: () => void;
 }
 
@@ -186,13 +187,13 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
 
     let updatedList: ScheduleItem[];
     if (uploadMode === 'replace') {
-      updatedList = parsedCsvResult.items;
+      updatedList = deduplicateSchedules(parsedCsvResult.items);
     } else {
-      updatedList = [...schedules, ...parsedCsvResult.items];
+      updatedList = deduplicateSchedules([...schedules, ...parsedCsvResult.items]);
     }
 
     saveSchedules(updatedList);
-    onSchedulesUpdated(updatedList);
+    onSchedulesUpdated(updatedList, false);
     const importedCount = parsedCsvResult.items.length;
     setParsedCsvResult(null);
     setIsUploadingCsv(false);
@@ -376,7 +377,7 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
       };
       updateScheduleItem(updated);
       const newList = schedules.map(s => s.id === updated.id ? updated : s);
-      onSchedulesUpdated(newList);
+      onSchedulesUpdated(newList, false);
       setUploadFeedback({
         type: 'success',
         message: `Jadwal "${updated.subjectTitle}" berhasil diperbarui!`
@@ -397,7 +398,7 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
         semester: formSemester.trim(),
         notes: formNotes.trim() || undefined
       });
-      onSchedulesUpdated([newItem, ...schedules]);
+      onSchedulesUpdated([newItem, ...schedules], false);
       setUploadFeedback({
         type: 'success',
         message: `Jadwal "${newItem.subjectTitle}" berhasil ditambahkan!`
@@ -425,13 +426,21 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
     try {
       const targetId = confirmDeleteItem.id;
       const targetTitle = confirmDeleteItem.title;
-      deleteScheduleItem(targetId);
+      const targetDate = confirmDeleteItem.date;
+      const targetTime = confirmDeleteItem.time ? confirmDeleteItem.time.split('-')[0].trim() : undefined;
+
+      await deleteScheduleItem(targetId, {
+        date: targetDate,
+        timeStart: targetTime,
+        subjectTitle: targetTitle,
+      });
+
       const updated = schedules.filter(s => s.id !== targetId);
-      onSchedulesUpdated(updated);
+      onSchedulesUpdated(updated, false);
       setConfirmDeleteItem(null);
       setUploadFeedback({
         type: 'success',
-        message: `Jadwal "${targetTitle}" berhasil dihapus dari sistem dan database.`
+        message: `Jadwal "${targetTitle}" berhasil dihapus secara permanen dari sistem dan cloud database.`
       });
       setTimeout(() => setUploadFeedback(null), 3500);
     } catch (err: any) {
@@ -453,12 +462,12 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
     setIsClearingAll(true);
     try {
       const totalCount = schedules.length;
-      clearAllSchedules();
-      onSchedulesUpdated([]);
+      await clearAllSchedules();
+      onSchedulesUpdated([], false);
       setIsConfirmClearAllOpen(false);
       setUploadFeedback({
         type: 'success',
-        message: `Seluruh (${totalCount}) jadwal semester berhasil dihapus dan dikosongkan.`
+        message: `Seluruh (${totalCount}) jadwal semester berhasil dihapus dan dikosongkan permanen.`
       });
       setTimeout(() => setUploadFeedback(null), 4000);
     } catch (err: any) {
@@ -469,6 +478,35 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
     } finally {
       setIsClearingAll(false);
     }
+  };
+
+  // Deteksi jika ada record duplikat dalam data jadwal saat ini
+  const duplicateInfo = useMemo(() => {
+    const seen = new Set<string>();
+    let duplicateCount = 0;
+    for (const s of schedules) {
+      const k = `${s.date}|${s.timeStart}|${s.timeEnd}|${(s.subjectTitle || '').toLowerCase().trim()}|${(s.classGroup || '').toLowerCase().trim()}|${(s.tutorName || '').toLowerCase().trim()}`;
+      if (seen.has(k)) {
+        duplicateCount++;
+      } else {
+        seen.add(k);
+      }
+    }
+    return {
+      hasDuplicates: duplicateCount > 0,
+      count: duplicateCount
+    };
+  }, [schedules]);
+
+  const handleCleanDuplicates = () => {
+    const cleaned = deduplicateSchedules(schedules);
+    saveSchedules(cleaned);
+    onSchedulesUpdated(cleaned, false);
+    setUploadFeedback({
+      type: 'success',
+      message: `Berhasil membersihkan ${duplicateInfo.count} jadwal ganda. Data kini bersih dan teratur.`
+    });
+    setTimeout(() => setUploadFeedback(null), 4000);
   };
 
   // Ambil daftar semester unik dari jadwal
@@ -908,10 +946,22 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
             </button>
           )}
 
+          {/* Clean Duplicates Button */}
+          {duplicateInfo.hasDuplicates && (
+            <button
+              onClick={handleCleanDuplicates}
+              className="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-sm ml-auto"
+              title="Bersihkan jadwal duplikat yang memiliki tanggal, jam, dan mata pelajaran yang sama"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+              <span>Bersihkan {duplicateInfo.count} Duplikat</span>
+            </button>
+          )}
+
           {schedules.length > 0 && (
             <button
               onClick={handleClearAll}
-              className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold flex items-center gap-1 ml-auto"
+              className={`px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold flex items-center gap-1 ${duplicateInfo.hasDuplicates ? '' : 'ml-auto'}`}
             >
               <Trash2 className="w-3.5 h-3.5" />
               <span>Hapus Semua</span>

@@ -220,9 +220,11 @@ export default function App() {
     setActiveTab('presensi');
   };
 
-  const handleSchedulesUpdated = (updated: ScheduleItem[]) => {
+  const handleSchedulesUpdated = (updated: ScheduleItem[], syncCloud: boolean = true) => {
     setSchedules(updated);
-    saveSchedules(updated);
+    if (syncCloud) {
+      saveSchedules(updated);
+    }
   };
 
   const isSupabaseReady = supabaseHealth && supabaseHealth.missingTables.length === 0;

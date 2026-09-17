@@ -139,12 +139,35 @@ export interface ParseScheduleResult {
 }
 
 /**
+ * Buat ID jadwal yang deterministik dan unik berdasarkan atribut utama jadwal.
+ * Mencegah duplikasi data berulang saat file CSV diunggah kembali ke database Supabase.
+ */
+export function createDeterministicScheduleId(
+  date: string,
+  timeStart: string,
+  timeEnd: string,
+  subjectTitle: string,
+  classGroup: string,
+  tutorName: string
+): string {
+  const clean = (str: string) => (str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const d = (date || '').replace(/[^0-9]/g, '');
+  const ts = clean(timeStart);
+  const te = clean(timeEnd);
+  const sub = clean(subjectTitle).substring(0, 16);
+  const cls = clean(classGroup).substring(0, 10);
+  const tut = clean(tutorName).substring(0, 12);
+  return `sch_${d}_${ts}_${te}_${cls}_${sub}_${tut}`;
+}
+
+/**
  * Membaca dan memvalidasi teks file CSV jadwal semester
  */
 export function parseScheduleCsv(csvText: string, availableTutors: Tutor[] = []): ParseScheduleResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   const items: ScheduleItem[] = [];
+  const seenDuplicateKeys = new Set<string>();
 
   if (!csvText || !csvText.trim()) {
     errors.push('File CSV kosong atau tidak memiliki data.');
@@ -331,8 +354,25 @@ export function parseScheduleCsv(csvText: string, availableTutors: Tutor[] = [])
       (t.nipCode && t.nipCode === tutorName)
     );
 
+    const resolvedTutorName = matchedTutor?.name || tutorName;
+    const deterministicId = createDeterministicScheduleId(
+      date,
+      timeStart,
+      timeEnd,
+      subjectTitle,
+      classGroup,
+      resolvedTutorName
+    );
+
+    // Filter duplikat dalam file CSV yang sama
+    const duplicateKey = `${date}|${timeStart}|${timeEnd}|${subjectTitle.toLowerCase()}|${classGroup.toLowerCase()}|${resolvedTutorName.toLowerCase()}`;
+    if (seenDuplicateKeys.has(duplicateKey)) {
+      continue; // Lewati baris duplikat agar tidak ada record ganda
+    }
+    seenDuplicateKeys.add(duplicateKey);
+
     const item: ScheduleItem = {
-      id: `sch-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 6)}`,
+      id: deterministicId,
       date,
       dayOfWeek,
       timeStart,
@@ -341,7 +381,7 @@ export function parseScheduleCsv(csvText: string, availableTutors: Tutor[] = [])
       subjectTitle,
       classGroup,
       tutorId: matchedTutor?.id,
-      tutorName: matchedTutor?.name || tutorName,
+      tutorName: resolvedTutorName,
       room,
       semester,
       notes: notes || undefined
