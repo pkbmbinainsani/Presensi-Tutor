@@ -6,6 +6,8 @@
  * dengan waktu presensi lokal tutor di Indonesia tanpa ada pergeseran hari atau selisih jam.
  */
 
+import { DayOfWeek } from '../types';
+
 export const TIMEZONE_WIB = 'Asia/Jakarta';
 
 export const BULAN_INDO = [
@@ -239,23 +241,202 @@ export function getWibPresetRange(preset: WibPresetType): { startDate: string; e
 }
 
 /**
- * Normalisasi format string tanggal menjadi YYYY-MM-DD
- * Mendukung format: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD
+ * Normalisasi nama hari dari berbagai variasi penulisan bahasa Indonesia maupun Inggris
  */
-export function normalizeDateString(raw: string): string | null {
+export function normalizeDayOfWeek(raw?: string | null): DayOfWeek | null {
   if (!raw) return null;
-  const clean = raw.trim();
+  const clean = raw.trim().toLowerCase();
 
-  // Pattern YYYY-MM-DD atau YYYY/MM/DD
-  if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(clean)) {
-    const [y, m, d] = clean.split(/[-/]/).map(Number);
-    return `${y}-${padZero(m)}-${padZero(d)}`;
+  if (clean.includes('senin') || clean === 'sen' || clean === 'monday' || clean === 'mon' || clean === '1') {
+    return 'Senin';
+  }
+  if (clean.includes('selasa') || clean === 'sel' || clean === 'tuesday' || clean === 'tue' || clean === '2') {
+    return 'Selasa';
+  }
+  if (clean.includes('rabu') || clean === 'rab' || clean === 'wednesday' || clean === 'wed' || clean === '3') {
+    return 'Rabu';
+  }
+  if (clean.includes('kamis') || clean === 'kam' || clean === 'thursday' || clean === 'thu' || clean === '4') {
+    return 'Kamis';
+  }
+  if (clean.includes('jumat') || clean.includes("jum'at") || clean === 'jum' || clean === 'friday' || clean === 'fri' || clean === '5') {
+    return 'Jumat';
+  }
+  if (clean.includes('sabtu') || clean === 'sab' || clean === 'saturday' || clean === 'sat' || clean === '6') {
+    return 'Sabtu';
+  }
+  if (clean.includes('minggu') || clean.includes('ahad') || clean === 'min' || clean === 'sunday' || clean === 'sun' || clean === '7' || clean === '0') {
+    return 'Minggu';
   }
 
-  // Pattern DD-MM-YYYY atau DD/MM/YYYY
-  if (/^\d{1,2}[-/]\d{1,2}[-/]\d{4}$/.test(clean)) {
-    const [d, m, y] = clean.split(/[-/]/).map(Number);
-    return `${y}-${padZero(m)}-${padZero(d)}`;
+  return null;
+}
+
+/**
+ * Peta nama-nama bulan dalam bahasa Indonesia & Inggris untuk parsing tanggal teks
+ */
+const MONTH_MAP: Record<string, number> = {
+  januari: 1, jan: 1, january: 1,
+  februari: 2, pebruari: 2, feb: 2, peb: 2, february: 2,
+  maret: 3, mar: 3, march: 3,
+  april: 4, apr: 4,
+  mei: 5, may: 5,
+  juni: 6, jun: 6, june: 6,
+  juli: 7, jul: 7, july: 7,
+  agustus: 8, ags: 8, agu: 8, aug: 8, august: 8,
+  september: 9, sep: 9, sept: 9,
+  oktober: 10, okt: 10, oct: 10, october: 10,
+  november: 11, nopember: 11, nov: 11, nop: 11,
+  desember: 12, des: 12, dec: 12, december: 12
+};
+
+/**
+ * Normalisasi format string tanggal menjadi YYYY-MM-DD
+ * Mendukung format:
+ * - YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD
+ * - DD-MM-YYYY, DD/MM/YYYY, DD.MM.YYYY (format standar Indonesia/Excel)
+ * - MM/DD/YYYY, M/D/YYYY (format Google Sheets / Excel US)
+ * - DD-MM-YY, DD/MM/YY, DD.MM.YY (tahun 2 digit)
+ * - Format teks nama bulan: "17 September 2026", "17-Sep-2026", "17/Sep/2026", "September 17, 2026"
+ * - String tanggal dengan prefix nama hari: "Kamis, 17/09/2026", "Senin, 14-09-2026"
+ * - Excel Serial Date Number (contoh: 46282)
+ * - String tanggal dengan timestamp atau ISO format
+ */
+export function normalizeDateString(raw: string | number | null | undefined, expectedDay?: string | null): string | null {
+  if (raw === null || raw === undefined) return null;
+  let clean = String(raw).trim();
+  if (!clean) return null;
+
+  // Hapus karakter BOM dan zero-width space yang sering muncul dari file CSV Excel
+  clean = clean.replace(/^\uFEFF/, '').replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+
+  // 1. Bersihkan prefix nama hari jika ada di kolom tanggal (misal: "Kamis, 17/09/2026")
+  clean = clean.replace(/^(senin|selasa|rabu|kamis|jumat|jum'at|sabtu|minggu|ahad|monday|tuesday|wednesday|thursday|friday|saturday|sunday)[,\s:]+/i, '').trim();
+
+  // 2. Bersihkan timestamp trailing (misal: "2026-09-17 00:00:00" atau "17/09/2026 08:00" atau "2026-09-17T00:00:00.000Z")
+  clean = clean.replace(/[T\s].*$/, '').trim();
+
+  // 3. Excel serial number: jika berupa bilangan bulat antara 35000 dan 65000 (rentang tahun 1995-2077)
+  if (/^\d{5}$/.test(clean)) {
+    const num = Number(clean);
+    if (num >= 35000 && num <= 65000) {
+      // Excel epoch 1899-12-30
+      const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+      const targetDate = new Date(excelEpoch.getTime() + num * 86400 * 1000);
+      const y = targetDate.getUTCFullYear();
+      const m = padZero(targetDate.getUTCMonth() + 1);
+      const d = padZero(targetDate.getUTCDate());
+      return `${y}-${m}-${d}`;
+    }
+  }
+
+  // 4. Cek apakah memuat nama bulan dalam teks (contoh: "17 September 2026", "17-Sep-2026", "17 Sep 26")
+  const textMonthRegex = /^(\d{1,2})[-/\s.]([a-zA-Z]{3,12})[-/\s.](\d{2,4})$/;
+  const matchText = clean.match(textMonthRegex);
+  if (matchText) {
+    const d = Number(matchText[1]);
+    const mStr = matchText[2].toLowerCase();
+    let y = Number(matchText[3]);
+    if (y < 100) y = y < 50 ? 2000 + y : 1900 + y;
+
+    const m = MONTH_MAP[mStr];
+    if (m && d >= 1 && d <= 31) {
+      return `${y}-${padZero(m)}-${padZero(d)}`;
+    }
+  }
+
+  // Cek pattern format US dengan nama bulan di depan: "September 17, 2026"
+  const textMonthUSRegex = /^([a-zA-Z]{3,12})[-/\s.](\d{1,2})[,\s-]+(\d{2,4})$/;
+  const matchTextUS = clean.match(textMonthUSRegex);
+  if (matchTextUS) {
+    const mStr = matchTextUS[1].toLowerCase();
+    const d = Number(matchTextUS[2]);
+    let y = Number(matchTextUS[3]);
+    if (y < 100) y = y < 50 ? 2000 + y : 1900 + y;
+
+    const m = MONTH_MAP[mStr];
+    if (m && d >= 1 && d <= 31) {
+      return `${y}-${padZero(m)}-${padZero(d)}`;
+    }
+  }
+
+  // 5. Pattern YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD
+  if (/^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}$/.test(clean)) {
+    const [y, m, d] = clean.split(/[-/.]/).map(Number);
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return `${y}-${padZero(m)}-${padZero(d)}`;
+    }
+  }
+
+  // 6. Pattern numerik 3 bagian dipisahkan titik, garis miring, atau strip
+  // Contoh: DD-MM-YYYY, DD/MM/YYYY, DD.MM.YYYY, MM/DD/YYYY, DD-MM-YY
+  const parts = clean.split(/[-/.]/);
+  if (parts.length === 3 && parts.every(p => /^\d+$/.test(p))) {
+    const p1 = Number(parts[0]);
+    const p2 = Number(parts[1]);
+    let p3 = Number(parts[2]);
+
+    // Jika p1 adalah tahun 4 digit (contoh: 2026/9/17)
+    if (parts[0].length === 4) {
+      const y = p1;
+      const m = p2;
+      const d = p3;
+      if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+        return `${y}-${padZero(m)}-${padZero(d)}`;
+      }
+    }
+
+    // Jika tahun 2 digit (contoh: 26 -> 2026)
+    if (p3 < 100) {
+      p3 = p3 < 50 ? 2000 + p3 : 1900 + p3;
+    }
+
+    const y = p3;
+
+    // Disambiguasi nilai p1 dan p2 (mana Hari, mana Bulan):
+    // Kasus A: p1 > 12 -> Pasti p1 adalah Hari, p2 adalah Bulan (contoh: 17/09/2026)
+    if (p1 > 12 && p2 <= 12) {
+      const d = p1;
+      const m = p2;
+      if (d >= 1 && d <= 31 && m >= 1 && m <= 12) {
+        return `${y}-${padZero(m)}-${padZero(d)}`;
+      }
+    }
+
+    // Kasus B: p2 > 12 -> Pasti p1 adalah Bulan, p2 adalah Hari (contoh: 09/17/2026 - format US Google Sheets/Excel)
+    if (p2 > 12 && p1 <= 12) {
+      const m = p1;
+      const d = p2;
+      if (d >= 1 && d <= 31 && m >= 1 && m <= 12) {
+        return `${y}-${padZero(m)}-${padZero(d)}`;
+      }
+    }
+
+    // Kasus C: Keduanya <= 12 (contoh: 05/09/2026 vs 09/05/2026)
+    if (p1 >= 1 && p1 <= 12 && p2 >= 1 && p2 <= 12) {
+      if (expectedDay) {
+        const normExp = normalizeDayOfWeek(expectedDay);
+        if (normExp) {
+          // Opsi 1: p1 = Hari, p2 = Bulan (format Indonesia DD/MM/YYYY)
+          const dt1 = new Date(y, p2 - 1, p1, 12, 0, 0);
+          const dayName1 = HARI_INDO[dt1.getDay()];
+
+          // Opsi 2: p1 = Bulan, p2 = Hari (format US MM/DD/YYYY)
+          const dt2 = new Date(y, p1 - 1, p2, 12, 0, 0);
+          const dayName2 = HARI_INDO[dt2.getDay()];
+
+          if (dayName1 === normExp && dayName2 !== normExp) {
+            return `${y}-${padZero(p2)}-${padZero(p1)}`;
+          }
+          if (dayName2 === normExp && dayName1 !== normExp) {
+            return `${y}-${padZero(p1)}-${padZero(p2)}`;
+          }
+        }
+      }
+
+      // Default Indonesia: p1 = Hari, p2 = Bulan (DD/MM/YYYY)
+      return `${y}-${padZero(p2)}-${padZero(p1)}`;
+    }
   }
 
   return null;
@@ -264,12 +445,40 @@ export function normalizeDateString(raw: string): string | null {
 /**
  * Dapatkan nama hari bahasa Indonesia (Senin - Minggu) dari string tanggal YYYY-MM-DD
  */
-export function getDayNameFromDateStr(dateStr: string): 'Senin' | 'Selasa' | 'Rabu' | 'Kamis' | 'Jumat' | 'Sabtu' | 'Minggu' {
+export function getDayNameFromDateStr(dateStr: string): DayOfWeek {
   if (!dateStr) return 'Senin';
   const norm = normalizeDateString(dateStr);
   if (!norm) return 'Senin';
   const [y, m, d] = norm.split('-').map(Number);
   const dateObj = new Date(y, m - 1, d, 12, 0, 0);
-  return (HARI_INDO[dateObj.getDay()] || 'Senin') as any;
+  return (HARI_INDO[dateObj.getDay()] || 'Senin') as DayOfWeek;
+}
+
+/**
+ * Dapatkan tanggal YYYY-MM-DD dari hari tertentu di pekan ini (Senin - Minggu)
+ * Berguna saat file CSV hanya mencantumkan kolom "Hari" tanpa kolom tanggal spesifik.
+ */
+export function getDateForDayInCurrentWeek(targetDay: DayOfWeek, refDate: Date = new Date()): string {
+  const dayIndexMap: Record<DayOfWeek, number> = {
+    'Senin': 1,
+    'Selasa': 2,
+    'Rabu': 3,
+    'Kamis': 4,
+    'Jumat': 5,
+    'Sabtu': 6,
+    'Minggu': 7
+  };
+
+  const targetIdx = dayIndexMap[targetDay] || 1;
+  const currentDayOfWeek = refDate.getDay(); // 0 = Minggu, 1 = Senin, ...
+  const currentIdx = currentDayOfWeek === 0 ? 7 : currentDayOfWeek;
+
+  const diffDays = targetIdx - currentIdx;
+  const resultDate = new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate() + diffDays, 12, 0, 0);
+
+  const yr = resultDate.getFullYear();
+  const mo = padZero(resultDate.getMonth() + 1);
+  const da = padZero(resultDate.getDate());
+  return `${yr}-${mo}-${da}`;
 }
 

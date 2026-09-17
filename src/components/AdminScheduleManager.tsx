@@ -25,7 +25,8 @@ import {
   AlertCircle,
   ExternalLink,
   Copy,
-  Layers
+  Layers,
+  Info
 } from 'lucide-react';
 import { ScheduleItem, DayOfWeek, ProgramType, Tutor, PKBMInfo, ClassLocation } from '../types';
 import { 
@@ -174,7 +175,7 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
   };
 
   // Terapkan hasil upload CSV
-  const handleApplyUploadedCsv = () => {
+  const handleApplyUploadedCsv = async () => {
     if (!parsedCsvResult || parsedCsvResult.items.length === 0) {
       setUploadFeedback({
         type: 'error',
@@ -192,12 +193,26 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
 
     saveSchedules(updatedList);
     onSchedulesUpdated(updatedList);
+    const importedCount = parsedCsvResult.items.length;
     setParsedCsvResult(null);
     setIsUploadingCsv(false);
+
     setUploadFeedback({
       type: 'success',
-      message: `Berhasil mengimpor ${parsedCsvResult.items.length} jadwal semester baru!`
+      message: `Berhasil mengimpor ${importedCount} jadwal semester! Menyinkronkan ke database online Supabase...`
     });
+
+    try {
+      const ok = await saveAllSchedulesOnline(updatedList, uploadMode === 'replace');
+      if (ok) {
+        setUploadFeedback({
+          type: 'success',
+          message: `Berhasil mengimpor ${importedCount} jadwal dan tersinkron permanen ke Supabase!`
+        });
+      }
+    } catch (e) {
+      console.warn('Sync to Supabase warning:', e);
+    }
 
     setTimeout(() => {
       setUploadFeedback(null);
@@ -695,6 +710,34 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
               </ul>
             </div>
           )}
+
+          {parsedCsvResult.warnings.length > 0 && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 space-y-1">
+              <p className="font-extrabold flex items-center gap-1.5">
+                <Info className="w-4 h-4 text-amber-600" />
+                <span>Penyesuaian Format Otomatis ({parsedCsvResult.warnings.length}):</span>
+              </p>
+              <ul className="list-disc pl-5 space-y-0.5 max-h-20 overflow-y-auto text-[11px] text-amber-800">
+                {parsedCsvResult.warnings.slice(0, 5).map((warn, idx) => (
+                  <li key={idx}>{warn}</li>
+                ))}
+                {parsedCsvResult.warnings.length > 5 && (
+                  <li className="italic font-medium">...dan {parsedCsvResult.warnings.length - 5} penyesuaian lainnya.</li>
+                )}
+              </ul>
+            </div>
+          )}
+
+          {/* Supported Format Guide */}
+          <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[11px] text-slate-600 flex flex-wrap items-center gap-2">
+            <span className="font-bold text-slate-800">Format Tanggal Didukung:</span>
+            <span className="px-2 py-0.5 bg-white border border-slate-200 rounded font-mono text-[10px]">YYYY-MM-DD</span>
+            <span className="px-2 py-0.5 bg-white border border-slate-200 rounded font-mono text-[10px]">DD/MM/YYYY</span>
+            <span className="px-2 py-0.5 bg-white border border-slate-200 rounded font-mono text-[10px]">DD-MM-YYYY</span>
+            <span className="px-2 py-0.5 bg-white border border-slate-200 rounded font-mono text-[10px]">DD.MM.YYYY</span>
+            <span className="px-2 py-0.5 bg-white border border-slate-200 rounded text-[10px]">17 September 2026</span>
+            <span className="px-2 py-0.5 bg-white border border-slate-200 rounded text-[10px]">Excel Serial Date</span>
+          </div>
 
           {/* Upload Mode Choice (Replace vs Append) */}
           <div className="p-4 bg-indigo-50/70 border border-indigo-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">

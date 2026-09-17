@@ -1,7 +1,7 @@
 import { AttendanceRecord, Tutor, PKBMInfo, ClassLocation, ScheduleItem } from '../types';
 import { INITIAL_TUTORS, PKBM_CONFIG, SAMPLE_ATTENDANCE_RECORDS, INITIAL_CLASS_LOCATIONS } from '../data/mockData';
 import { parseScheduleCsv, generateScheduleTemplateCsv } from './csvScheduleParser';
-import { getWibToday } from './dateUtils';
+import { getWibToday, normalizeDateString, getDayNameFromDateStr, getDateForDayInCurrentWeek } from './dateUtils';
 import {
   fetchTutorsOnline,
   upsertTutorOnline,
@@ -280,11 +280,19 @@ export function getSchedules(): ScheduleItem[] {
     let needsUpdate = false;
     const today = getWibToday();
     const validated = parsed.map(item => {
-      if (!item.date) {
+      let itemDate = item.date ? (normalizeDateString(item.date, item.dayOfWeek) || item.date) : '';
+      if (!itemDate) {
+        needsUpdate = true;
+        itemDate = item.dayOfWeek ? getDateForDayInCurrentWeek(item.dayOfWeek) : today;
+      }
+
+      const trueDay = getDayNameFromDateStr(itemDate);
+      if (item.date !== itemDate || item.dayOfWeek !== trueDay) {
         needsUpdate = true;
         return {
           ...item,
-          date: today
+          date: itemDate,
+          dayOfWeek: trueDay
         };
       }
       return item;

@@ -1,47 +1,24 @@
 import { ScheduleItem, DayOfWeek, ProgramType, Tutor } from '../types';
-import { normalizeDateString, getDayNameFromDateStr, getWibToday } from './dateUtils';
+import { 
+  normalizeDateString, 
+  getDayNameFromDateStr, 
+  getWibToday, 
+  normalizeDayOfWeek, 
+  getDateForDayInCurrentWeek 
+} from './dateUtils';
+
+// Re-export untuk kompatibilitas modul lain
+export { normalizeDayOfWeek };
 
 export const VALID_DAYS: DayOfWeek[] = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
 
 /**
- * Normalisasi nama hari dari berbagai variasi penulisan bahasa Indonesia maupun Inggris
- */
-export function normalizeDayOfWeek(raw: string): DayOfWeek | null {
-  if (!raw) return null;
-  const clean = raw.trim().toLowerCase();
-
-  if (clean.includes('senin') || clean === 'sen' || clean === 'monday' || clean === 'mon' || clean === '1') {
-    return 'Senin';
-  }
-  if (clean.includes('selasa') || clean === 'sel' || clean === 'tuesday' || clean === 'tue' || clean === '2') {
-    return 'Selasa';
-  }
-  if (clean.includes('rabu') || clean === 'rab' || clean === 'wednesday' || clean === 'wed' || clean === '3') {
-    return 'Rabu';
-  }
-  if (clean.includes('kamis') || clean === 'kam' || clean === 'thursday' || clean === 'thu' || clean === '4') {
-    return 'Kamis';
-  }
-  if (clean.includes('jumat') || clean.includes("jum'at") || clean === 'jum' || clean === 'friday' || clean === 'fri' || clean === '5') {
-    return 'Jumat';
-  }
-  if (clean.includes('sabtu') || clean === 'sab' || clean === 'saturday' || clean === 'sat' || clean === '6') {
-    return 'Sabtu';
-  }
-  if (clean.includes('minggu') || clean.includes('ahad') || clean === 'min' || clean === 'sunday' || clean === 'sun' || clean === '7' || clean === '0') {
-    return 'Minggu';
-  }
-
-  return null;
-}
-
-/**
- * Normalisasi format jam HH:mm (contoh: 8.00 -> 08:00, 8:30 -> 08:30)
+ * Normalisasi format jam HH:mm (contoh: 8.00 -> 08:00, 8:30 -> 08:30, 08:00 WIB -> 08:00)
  */
 export function normalizeTime(raw: string): string {
   if (!raw) return '08:00';
   let clean = raw.trim().replace(/\./g, ':');
-  // Hapus karakter non-digit dan non-colon
+  // Hapus karakter non-digit dan non-colon (termasuk "WIB")
   clean = clean.replace(/[^0-9:]/g, '');
 
   if (/^\d{1,2}:\d{2}$/.test(clean)) {
@@ -58,6 +35,18 @@ export function normalizeTime(raw: string): string {
   }
 
   return '08:00';
+}
+
+/**
+ * Tambah menit ke format string jam "HH:mm"
+ */
+export function addMinutesToTime(timeStr: string, minutes: number = 90): string {
+  const norm = normalizeTime(timeStr) || '08:00';
+  const [h, m] = norm.split(':').map(Number);
+  const total = h * 60 + m + minutes;
+  const endH = Math.floor(total / 60) % 24;
+  const endM = total % 60;
+  return `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
 }
 
 /**
@@ -121,13 +110,20 @@ export function parseCsvLine(line: string, delimiter: string): string[] {
 }
 
 /**
- * Mendeteksi delimiter yang paling dominan di baris header (koma, titik-koma, atau tab)
+ * Mendeteksi delimiter yang paling dominan di baris-baris awal (koma, titik-koma, atau tab)
  */
 export function detectDelimiter(text: string): string {
-  const firstLine = text.split(/\r\n|\n|\r/)[0] || '';
-  const semicolons = (firstLine.match(/;/g) || []).length;
-  const commas = (firstLine.match(/,/g) || []).length;
-  const tabs = (firstLine.match(/\t/g) || []).length;
+  const clean = text.replace(/^\uFEFF/, '');
+  const lines = clean.split(/\r\n|\n|\r/).filter(l => l.trim().length > 0).slice(0, 5);
+  let semicolons = 0;
+  let commas = 0;
+  let tabs = 0;
+
+  for (const line of lines) {
+    semicolons += (line.match(/;/g) || []).length;
+    commas += (line.match(/,/g) || []).length;
+    tabs += (line.match(/\t/g) || []).length;
+  }
 
   if (semicolons >= commas && semicolons >= tabs && semicolons > 0) return ';';
   if (tabs > commas && tabs > semicolons) return '\t';
@@ -155,63 +151,162 @@ export function parseScheduleCsv(csvText: string, availableTutors: Tutor[] = [])
     return { items, errors, warnings, totalRows: 0, validRows: 0 };
   }
 
-  const delimiter = detectDelimiter(csvText);
-  const rawLines = csvText.split(/\r\n|\n|\r/).filter(l => l.trim().length > 0);
+  // Bersihkan karakter BOM jika ada
+  const cleanCsvText = csvText.replace(/^\uFEFF/, '').trim();
+  const delimiter = detectDelimiter(cleanCsvText);
+  const rawLines = cleanCsvText.split(/\r\n|\n|\r/).filter(l => l.trim().length > 0);
 
   if (rawLines.length < 2) {
-    errors.push('File CSV harus memuat minimal baris judul kolom (header) dan 1 baris jadwal.');
+    errors.push('File CSV harus memuat minimal baris judul kolom (header) dan 1 baris data jadwal.');
     return { items, errors, warnings, totalRows: 0, validRows: 0 };
   }
 
-  // Parse header
-  const headerCells = parseCsvLine(rawLines[0], delimiter).map(h => 
-    h.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
-  );
+  // Cari baris header yang sesungguhnya (bisa di baris 0, 1, atau 2 jika ada judul banner di baris atas)
+  let headerRowIndex = 0;
+  let headerCells: string[] = [];
+  const knownHeaderKeywords = ['tanggal', 'tgl', 'hari', 'jam', 'waktu', 'pukul', 'mapel', 'mata_pelajaran', 'pelajaran', 'tutor', 'guru', 'pengajar', 'kelas', 'program', 'jenjang', 'ruang', 'lokasi'];
 
-  // Cari indeks kolom berdasarkan sinonim umum
+  for (let r = 0; r < Math.min(rawLines.length, 4); r++) {
+    const parsedLine = parseCsvLine(rawLines[r], delimiter).map(h => 
+      h.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
+    );
+    const matchCount = parsedLine.filter(cell => 
+      knownHeaderKeywords.some(kw => cell === kw || cell.includes(kw))
+    ).length;
+
+    if (matchCount >= 2) {
+      headerRowIndex = r;
+      headerCells = parsedLine;
+      break;
+    }
+  }
+
+  if (headerCells.length === 0) {
+    headerRowIndex = 0;
+    headerCells = parseCsvLine(rawLines[0], delimiter).map(h => 
+      h.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
+    );
+  }
+
+  // Cari indeks kolom berdasarkan sinonim umum (utamakan exact match sebelum includes)
   const findCol = (candidates: string[]): number => {
+    // 1. Exact match
     for (const c of candidates) {
-      const idx = headerCells.findIndex(h => h === c || h.includes(c));
+      const idx = headerCells.findIndex(h => h === c);
+      if (idx !== -1) return idx;
+    }
+    // 2. Includes match
+    for (const c of candidates) {
+      const idx = headerCells.findIndex(h => h.includes(c));
       if (idx !== -1) return idx;
     }
     return -1;
   };
 
-  const dateIdx = findCol(['tanggal', 'tgl', 'date', 'waktu_pelaksanaan']);
-  const dayIdx = findCol(['hari', 'day', 'hari_belajar', 'hari_mengajar']);
-  const timeStartIdx = findCol(['jam_mulai', 'waktu_mulai', 'mulai', 'start_time', 'start', 'jam_ke']);
-  const timeEndIdx = findCol(['jam_selesai', 'waktu_selesai', 'selesai', 'end_time', 'end']);
-  const programIdx = findCol(['program', 'jenjang', 'paket', 'tingkat']);
-  const classIdx = findCol(['kelas', 'rombel', 'kelompok', 'class_group', 'class', 'kelompok_belajar']);
-  const subjectIdx = findCol(['mata_pelajaran', 'mapel', 'subject', 'kegiatan', 'materi', 'nama_pelajaran']);
-  const tutorIdx = findCol(['nama_tutor', 'tutor', 'guru', 'pengajar', 'instruktur', 'tutor_name']);
-  const roomIdx = findCol(['ruang', 'lokasi', 'tempat', 'room', 'pos_belajar', 'tempat_kegiatan']);
-  const semesterIdx = findCol(['semester', 'tahun_ajaran', 'ta', 'periode']);
-  const notesIdx = findCol(['keterangan', 'catatan', 'notes', 'topik', 'deskripsi']);
+  const dateIdx = findCol(['tanggal', 'tgl', 'date', 'waktu_pelaksanaan', 'tgl_kbm', 'tgl_belajar', 'tanggal_kbm', 'hari_tanggal', 'hari_tgl']);
+  const dayIdx = findCol(['hari', 'day', 'hari_belajar', 'hari_mengajar', 'hari_kbm']);
+  const timeStartIdx = findCol(['jam_mulai', 'waktu_mulai', 'mulai', 'start_time', 'start', 'jam_ke', 'jam_awal', 'pukul_mulai']);
+  const timeEndIdx = findCol(['jam_selesai', 'waktu_selesai', 'selesai', 'end_time', 'end', 'jam_akhir', 'pukul_selesai']);
+  const combinedTimeIdx = findCol(['jam', 'waktu', 'pukul', 'waktu_kbm', 'jam_kbm', 'jam_pelajaran', 'jam_belajar']);
+  const programIdx = findCol(['program', 'jenjang', 'paket', 'tingkat', 'pendidikan', 'jurusan']);
+  const classIdx = findCol(['kelas', 'rombel', 'kelompok', 'class_group', 'class', 'kelompok_belajar', 'tingkat_kelas']);
+  const subjectIdx = findCol(['mata_pelajaran', 'mapel', 'subject', 'kegiatan', 'materi', 'nama_pelajaran', 'mata_kuliah', 'pelajaran', 'materi_pembelajaran', 'kurikulum']);
+  const tutorIdx = findCol(['nama_tutor', 'tutor', 'guru', 'pengajar', 'instruktur', 'tutor_name', 'nama_guru', 'nama_pengajar', 'pendidik']);
+  const roomIdx = findCol(['ruang', 'lokasi', 'tempat', 'room', 'pos_belajar', 'tempat_kegiatan', 'gedung', 'ruang_kelas', 'ruangan']);
+  const semesterIdx = findCol(['semester', 'tahun_ajaran', 'ta', 'periode', 'smt']);
+  const notesIdx = findCol(['keterangan', 'catatan', 'notes', 'topik', 'deskripsi', 'ket', 'info', 'silabus']);
 
   if (dateIdx === -1 && dayIdx === -1) {
-    warnings.push('Kolom "Tanggal" atau "Hari" tidak ditemukan di header CSV.');
+    warnings.push('Kolom "Tanggal" atau "Hari" tidak terdeteksi secara otomatis di baris judul.');
   }
   if (subjectIdx === -1 && programIdx === -1) {
-    errors.push('Kolom "Mata Pelajaran" atau "Program" wajib ada di header CSV.');
-    return { items, errors, warnings, totalRows: rawLines.length - 1, validRows: 0 };
+    errors.push('Kolom "Mata Pelajaran" atau "Program" wajib ada di baris judul (header) CSV.');
+    return { items, errors, warnings, totalRows: rawLines.length - (headerRowIndex + 1), validRows: 0 };
   }
 
   let totalRows = 0;
-  const todayWib = getWibToday();
 
-  for (let i = 1; i < rawLines.length; i++) {
+  for (let i = headerRowIndex + 1; i < rawLines.length; i++) {
     const line = rawLines[i].trim();
     if (!line) continue;
     totalRows++;
 
-    const cells = parseCsvLine(line, delimiter);
+    const cells = parseCsvLine(line, delimiter).map(c => c.replace(/^["']|["']$/g, '').trim());
 
     // Ambil nilai per kolom dengan proteksi indeks
-    const rawDate = dateIdx !== -1 ? cells[dateIdx] || '' : '';
-    const rawDay = dayIdx !== -1 ? cells[dayIdx] || '' : '';
+    let rawDate = dateIdx !== -1 ? cells[dateIdx] || '' : '';
+    let rawDay = dayIdx !== -1 ? cells[dayIdx] || '' : '';
+
+    // Deteksi jika hari & tanggal tergabung dalam satu kolom (contoh: "Kamis, 17/09/2026")
+    if (dateIdx === dayIdx && rawDate) {
+      const dayMatch = rawDate.match(/^(senin|selasa|rabu|kamis|jumat|jum'at|sabtu|minggu|ahad|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i);
+      if (dayMatch) {
+        rawDay = dayMatch[1];
+      }
+    } else if (!rawDay && rawDate) {
+      const dayMatch = rawDate.match(/^(senin|selasa|rabu|kamis|jumat|jum'at|sabtu|minggu|ahad|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i);
+      if (dayMatch) {
+        rawDay = dayMatch[1];
+      }
+    }
+
+    const normalizedExpectedDay = normalizeDayOfWeek(rawDay);
+
+    // Normalisasi tanggal dengan bantuan expectedDay untuk mendisambiguasi format DD/MM vs MM/DD
+    const normalizedDate = normalizeDateString(rawDate, normalizedExpectedDay);
+
+    let date: string;
+    let dayOfWeek: DayOfWeek;
+
+    if (normalizedDate) {
+      date = normalizedDate;
+      const calendarDay = getDayNameFromDateStr(normalizedDate);
+
+      // Jika user menyediakan nama hari, cek kesesuaiannya dengan kalender
+      if (normalizedExpectedDay && normalizedExpectedDay !== calendarDay) {
+        dayOfWeek = calendarDay;
+      } else {
+        dayOfWeek = calendarDay;
+      }
+    } else if (normalizedExpectedDay) {
+      // Jika kolom tanggal kosong namun nama hari terisi (jadwal berulang mingguan):
+      // Petakan ke tanggal riil pekan ini agar tanggal dan harinya cocok 100%
+      dayOfWeek = normalizedExpectedDay;
+      date = getDateForDayInCurrentWeek(normalizedExpectedDay);
+    } else {
+      // Fallback aman jika tanggal maupun hari tidak dapat dibaca
+      dayOfWeek = 'Senin';
+      date = getDateForDayInCurrentWeek('Senin');
+      warnings.push(`Baris ${i + 1}: Tanggal dan hari tidak terdeteksi. Dialihkan ke Senin pekan ini (${date}).`);
+    }
+
+    // Parsing Waktu Mulai & Selesai
+    let timeStart = '08:00';
+    let timeEnd = '09:30';
+
     const rawStart = timeStartIdx !== -1 ? cells[timeStartIdx] || '' : '';
     const rawEnd = timeEndIdx !== -1 ? cells[timeEndIdx] || '' : '';
+    const rawCombinedTime = combinedTimeIdx !== -1 ? cells[combinedTimeIdx] || '' : '';
+
+    if (rawStart) {
+      timeStart = normalizeTime(rawStart);
+      if (rawEnd) {
+        timeEnd = normalizeTime(rawEnd);
+      } else {
+        timeEnd = addMinutesToTime(timeStart, 90);
+      }
+    } else if (rawCombinedTime) {
+      // Membaca rentang waktu seperti "08:00 - 09:30", "08.00-09.30", "08:00 s/d 09:30"
+      const timeParts = rawCombinedTime.split(/\s*(?:-|–|—|s\/d|s\.d|sampai|to)\s*/i);
+      if (timeParts.length >= 2) {
+        timeStart = normalizeTime(timeParts[0]);
+        timeEnd = normalizeTime(timeParts[1]);
+      } else {
+        timeStart = normalizeTime(rawCombinedTime);
+        timeEnd = addMinutesToTime(timeStart, 90);
+      }
+    }
+
     const rawProg = programIdx !== -1 ? cells[programIdx] || '' : '';
     const rawClass = classIdx !== -1 ? cells[classIdx] || '' : '';
     const rawSubj = subjectIdx !== -1 ? cells[subjectIdx] || '' : '';
@@ -219,31 +314,6 @@ export function parseScheduleCsv(csvText: string, availableTutors: Tutor[] = [])
     const rawRoom = roomIdx !== -1 ? cells[roomIdx] || '' : '';
     const rawSem = semesterIdx !== -1 ? cells[semesterIdx] || '' : '';
     const rawNotes = notesIdx !== -1 ? cells[notesIdx] || '' : '';
-
-    // Normalisasi tanggal & hari
-    const normalizedDate = normalizeDateString(rawDate);
-    let date = normalizedDate || '';
-    let dayOfWeek: DayOfWeek;
-
-    if (normalizedDate) {
-      date = normalizedDate;
-      dayOfWeek = getDayNameFromDateStr(normalizedDate);
-    } else {
-      // Jika kolom tanggal kosong namun ada nama hari
-      dayOfWeek = normalizeDayOfWeek(rawDay) || 'Senin';
-      date = todayWib;
-    }
-
-    const timeStart = normalizeTime(rawStart) || '08:00';
-    let timeEnd = normalizeTime(rawEnd);
-    if (!rawEnd || timeEnd === '08:00') {
-      // Default durasi 90 menit jika tidak ditentukan
-      const [h, m] = timeStart.split(':').map(Number);
-      const totalMin = h * 60 + m + 90;
-      const endH = Math.floor(totalMin / 60) % 24;
-      const endM = totalMin % 60;
-      timeEnd = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
-    }
 
     const program = normalizeProgram(rawProg);
     const subjectTitle = rawSubj.trim() || 'Pembelajaran Tematik / Keaksaraan';
@@ -352,7 +422,7 @@ export function generateScheduleTemplateCsv(): string {
     ...rows.map(row => row.map(val => `"${val.replace(/"/g, '""')}"`).join(','))
   ];
 
-  return csvRows.join('\r\n');
+  return '\uFEFF' + csvRows.join('\r\n');
 }
 
 /**
@@ -392,5 +462,5 @@ export function exportSchedulesToCsv(items: ScheduleItem[]): string {
     ...rows.map(row => row.map(val => `"${(val || '').replace(/"/g, '""')}"`).join(','))
   ];
 
-  return csvRows.join('\r\n');
+  return '\uFEFF' + csvRows.join('\r\n');
 }
