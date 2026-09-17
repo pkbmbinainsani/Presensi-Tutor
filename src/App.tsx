@@ -304,8 +304,10 @@ export default function App() {
           <AdminScheduleManager
             schedules={schedules}
             tutors={tutors}
+            locations={locations}
             pkbmInfo={pkbmInfo}
             onSchedulesUpdated={handleSchedulesUpdated}
+            onOpenSupabaseStatus={() => setIsSupabaseModalOpen(true)}
           />
         )}
 

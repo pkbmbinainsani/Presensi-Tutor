@@ -34,12 +34,17 @@ export const SupabaseStatusModal: React.FC<SupabaseStatusModalProps> = ({
   const [health, setHealth] = useState<SupabaseHealthStatus | null>(null);
   const [isChecking, setIsChecking] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
+  const [selectedSqlTab, setSelectedSqlTab] = useState<'schedules' | 'all'>('schedules');
 
   const runHealthCheck = async () => {
     setIsChecking(true);
     try {
       const res = await checkSupabaseHealth();
       setHealth(res);
+      // Auto select schedules tab if only schedules is missing
+      if (res && res.tables.schedules === false && res.tables.tutors === true) {
+        setSelectedSqlTab('schedules');
+      }
     } catch (e) {
       console.warn('Health check note:', e);
     } finally {
@@ -55,8 +60,47 @@ export const SupabaseStatusModal: React.FC<SupabaseStatusModalProps> = ({
 
   if (!isOpen) return null;
 
-  const sqlCode = `-- ==============================================================================
--- SKRIP SETUP DATABASE SUPABASE - PKBM BINA INSANI SUMOWONO
+  const schedulesOnlySql = `-- ==============================================================================
+-- SKRIP TABEL JADWAL KBM (schedules) - PKBM BINA INSANI SUMOWONO
+-- Jalankan di: https://bjekrnawldsnbhtfelzk.supabase.co/project/default/editor
+-- ==============================================================================
+
+CREATE TABLE IF NOT EXISTS public.schedules (
+    id TEXT PRIMARY KEY,
+    date TEXT NOT NULL,
+    day_of_week TEXT NOT NULL,
+    time_start TEXT NOT NULL,
+    time_end TEXT NOT NULL,
+    program TEXT NOT NULL,
+    subject_title TEXT NOT NULL,
+    class_group TEXT NOT NULL,
+    tutor_id TEXT,
+    tutor_name TEXT NOT NULL,
+    room TEXT DEFAULT 'Gedung Utama PKBM',
+    semester TEXT DEFAULT 'Semester Ganjil 2026/2027',
+    academic_year TEXT DEFAULT '2026/2027',
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
+);
+
+-- Kolom tambahan jika tabel sudah sempat dibuat sebelumnya
+ALTER TABLE public.schedules ADD COLUMN IF NOT EXISTS academic_year TEXT DEFAULT '2026/2027';
+
+CREATE INDEX IF NOT EXISTS idx_schedules_date ON public.schedules (date ASC);
+CREATE INDEX IF NOT EXISTS idx_schedules_program ON public.schedules (program);
+
+-- Aktifkan Row Level Security (RLS) & Hak Akses Publik
+ALTER TABLE public.schedules ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Anon public access for schedules" ON public.schedules;
+CREATE POLICY "Anon public access for schedules" ON public.schedules FOR ALL TO anon USING (true) WITH CHECK (true);
+
+-- Aktifkan Realtime Publikasi
+DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.schedules; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+`;
+
+  const fullSqlCode = `-- ==============================================================================
+-- SKRIP LENGKAP SETUP DATABASE SUPABASE - PKBM BINA INSANI SUMOWONO
 -- ==============================================================================
 -- Jalankan skrip ini di: https://bjekrnawldsnbhtfelzk.supabase.co/project/default/editor
 
@@ -153,9 +197,12 @@ CREATE TABLE IF NOT EXISTS public.schedules (
     tutor_name TEXT NOT NULL,
     room TEXT DEFAULT 'Gedung Utama PKBM',
     semester TEXT DEFAULT 'Semester Ganjil 2026/2027',
+    academic_year TEXT DEFAULT '2026/2027',
     notes TEXT,
     created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
+
+ALTER TABLE public.schedules ADD COLUMN IF NOT EXISTS academic_year TEXT DEFAULT '2026/2027';
 
 CREATE INDEX IF NOT EXISTS idx_schedules_date ON public.schedules (date ASC);
 CREATE INDEX IF NOT EXISTS idx_schedules_program ON public.schedules (program);
@@ -194,8 +241,10 @@ DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.pkbm_info; EXCE
 DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.schedules; EXCEPTION WHEN OTHERS THEN NULL; END $$;
 `;
 
+  const activeSqlCode = selectedSqlTab === 'schedules' ? schedulesOnlySql : fullSqlCode;
+
   const handleCopy = () => {
-    navigator.clipboard.writeText(sqlCode);
+    navigator.clipboard.writeText(activeSqlCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 3000);
   };
@@ -281,16 +330,17 @@ DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.schedules; EXCE
               </button>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
               {[
                 { name: 'tutors', label: 'Master Tutor', ready: health?.tables.tutors },
                 { name: 'class_locations', label: 'Titik Lokasi', ready: health?.tables.class_locations },
                 { name: 'attendance_records', label: 'Data Presensi', ready: health?.tables.attendance_records },
                 { name: 'pkbm_info', label: 'Profil Lembaga', ready: health?.tables.pkbm_info },
+                { name: 'schedules', label: 'Jadwal KBM', ready: health?.tables.schedules },
               ].map(t => (
                 <div 
                   key={t.name}
-                  className={`p-3 rounded-xl border text-center space-y-1 ${
+                  className={`p-2.5 rounded-xl border text-center space-y-1 ${
                     t.ready 
                       ? 'bg-emerald-50 border-emerald-300 text-emerald-950' 
                       : 'bg-amber-50 border-amber-300 text-amber-950'
@@ -298,13 +348,13 @@ DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.schedules; EXCE
                 >
                   <div className="flex justify-center">
                     {t.ready ? (
-                      <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                     ) : (
-                      <AlertTriangle className="w-5 h-5 text-amber-600" />
+                      <AlertTriangle className="w-4 h-4 text-amber-600" />
                     )}
                   </div>
-                  <p className="font-bold text-xs">{t.label}</p>
-                  <p className="text-[10px] font-mono text-slate-500">{t.name}</p>
+                  <p className="font-bold text-[11px] leading-tight">{t.label}</p>
+                  <p className="text-[9px] font-mono text-slate-500">{t.name}</p>
                   <p className="text-[10px] font-extrabold">
                     {t.ready ? 'Tersedia' : 'Belum Ada'}
                   </p>
@@ -320,22 +370,66 @@ DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.schedules; EXCE
                 <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
                 <div>
                   <h5 className="font-extrabold text-amber-900 text-xs sm:text-sm">
-                    Tabel Supabase Belum Dibuat di Database
+                    {health?.tables.schedules === false && health?.tables.tutors === true
+                      ? 'Tabel Jadwal (schedules) Belum Dibuat di Supabase'
+                      : 'Tabel Supabase Belum Lengkap di Database'}
                   </h5>
                   <p className="text-amber-800 text-[11px] mt-0.5 leading-relaxed">
-                    Agar data tersimpan secara permanen di database online Supabase, jalankan skrip SQL di bawah ini pada menu <strong>SQL Editor</strong> di dashboard Supabase Anda.
+                    {health?.tables.schedules === false && health?.tables.tutors === true
+                      ? 'Tabel presensi, tutor, dan lokasi sudah aktif. Anda hanya perlu menjalankan script tabel jadwal di bawah ini agar KBM dapat tersinkron otomatis ke Supabase.'
+                      : 'Agar data tersimpan secara permanen di database online Supabase, jalankan skrip SQL di bawah ini pada menu SQL Editor di dashboard Supabase Anda.'}
                   </p>
                 </div>
+              </div>
+
+              {/* Tab Selector for SQL */}
+              <div className="flex items-center gap-1.5 p-1 bg-amber-200/50 rounded-xl border border-amber-300/80">
+                <button
+                  type="button"
+                  onClick={() => setSelectedSqlTab('schedules')}
+                  className={`flex-1 py-1.5 px-2.5 rounded-lg text-[11px] font-black transition ${
+                    selectedSqlTab === 'schedules'
+                      ? 'bg-amber-600 text-white shadow-sm'
+                      : 'text-amber-900 hover:bg-amber-300/40'
+                  }`}
+                >
+                  Khusus Tabel Jadwal (schedules)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedSqlTab('all')}
+                  className={`flex-1 py-1.5 px-2.5 rounded-lg text-[11px] font-black transition ${
+                    selectedSqlTab === 'all'
+                      ? 'bg-amber-600 text-white shadow-sm'
+                      : 'text-amber-900 hover:bg-amber-300/40'
+                  }`}
+                >
+                  Semua Tabel Lengkap (5 Tabel)
+                </button>
               </div>
 
               <div className="bg-white p-3 rounded-xl border border-amber-200 space-y-2">
                 <p className="font-bold text-slate-700 text-[11px]">Cara Eksekusi (Hanya 1 Menit):</p>
                 <ol className="list-decimal list-inside space-y-1 text-[11px] text-slate-600">
-                  <li>Klik tombol hijau <strong>"Salin Skrip SQL Supabase"</strong> di bawah.</li>
-                  <li>Buka <a href="https://bjekrnawldsnbhtfelzk.supabase.co" target="_blank" rel="noreferrer" className="text-blue-600 font-bold underline">Supabase Dashboard &gt; SQL Editor</a>.</li>
-                  <li>Klik <strong>New Query</strong>, tempelkan skrip yang disalin, lalu klik <strong>Run</strong>.</li>
+                  <li>
+                    Klik tombol hijau <strong>"Salin Script SQL ({selectedSqlTab === 'schedules' ? 'Tabel Jadwal' : 'Semua Tabel'})"</strong> di bawah.
+                  </li>
+                  <li>
+                    Buka{' '}
+                    <a href="https://bjekrnawldsnbhtfelzk.supabase.co" target="_blank" rel="noreferrer" className="text-blue-600 font-bold underline">
+                      Supabase Dashboard &gt; SQL Editor
+                    </a>.
+                  </li>
+                  <li>Klik <strong>New Query</strong>, tempelkan (Paste) skrip yang disalin, lalu klik <strong>Run</strong>.</li>
                   <li>Kembali ke sini dan klik <strong>"Periksa Tabel"</strong>.</li>
                 </ol>
+              </div>
+
+              {/* Preview Box */}
+              <div className="relative">
+                <pre className="p-3 bg-slate-900 text-emerald-400 rounded-xl text-[10px] font-mono max-h-36 overflow-y-auto leading-relaxed border border-slate-700">
+                  {activeSqlCode}
+                </pre>
               </div>
 
               {/* Copy Button */}
@@ -345,7 +439,7 @@ DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.schedules; EXCE
                 className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl font-extrabold flex items-center justify-center gap-2 shadow transition"
               >
                 {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                <span>{copied ? 'Berhasil Disalin ke Clipboard!' : 'Salin Skrip SQL Supabase'}</span>
+                <span>{copied ? 'Berhasil Disalin ke Clipboard!' : `Salin Skrip SQL (${selectedSqlTab === 'schedules' ? 'Tabel Jadwal' : 'Semua Tabel'})`}</span>
               </button>
             </div>
           )}

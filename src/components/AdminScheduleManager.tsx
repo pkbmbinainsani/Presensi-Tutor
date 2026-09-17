@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   CalendarDays, 
   Upload, 
@@ -22,9 +22,12 @@ import {
   Calendar,
   Cloud,
   Database,
-  AlertCircle
+  AlertCircle,
+  ExternalLink,
+  Copy,
+  Layers
 } from 'lucide-react';
-import { ScheduleItem, DayOfWeek, ProgramType, Tutor, PKBMInfo } from '../types';
+import { ScheduleItem, DayOfWeek, ProgramType, Tutor, PKBMInfo, ClassLocation } from '../types';
 import { 
   parseScheduleCsv, 
   generateScheduleTemplateCsv, 
@@ -40,14 +43,16 @@ import {
   clearAllSchedules, 
   generateSampleSemesterSchedules 
 } from '../lib/storage';
-import { saveAllSchedulesOnline } from '../lib/supabase';
+import { saveAllSchedulesOnline, fetchSchedulesOnline } from '../lib/supabase';
 import { getWibToday, getDayNameFromDateStr } from '../lib/dateUtils';
 
 interface AdminScheduleManagerProps {
   schedules: ScheduleItem[];
   tutors: Tutor[];
+  locations?: ClassLocation[];
   pkbmInfo: PKBMInfo;
   onSchedulesUpdated: (updated: ScheduleItem[]) => void;
+  onOpenSupabaseStatus?: () => void;
 }
 
 const PROGRAM_OPTIONS: ProgramType[] = [
@@ -62,8 +67,10 @@ const PROGRAM_OPTIONS: ProgramType[] = [
 export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
   schedules,
   tutors,
+  locations = [],
   pkbmInfo,
-  onSchedulesUpdated
+  onSchedulesUpdated,
+  onOpenSupabaseStatus
 }) => {
   // Filter & Search State
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -89,6 +96,11 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
   const [isSyncingSupabase, setIsSyncingSupabase] = useState<boolean>(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  // Supabase Table Status & SQL Modal State
+  const [isTableMissing, setIsTableMissing] = useState<boolean | null>(null);
+  const [isScheduleSqlModalOpen, setIsScheduleSqlModalOpen] = useState<boolean>(false);
+  const [sqlCopied, setSqlCopied] = useState<boolean>(false);
+
   // CSV Upload State
   const [isUploadingCsv, setIsUploadingCsv] = useState<boolean>(false);
   const [parsedCsvResult, setParsedCsvResult] = useState<ParseScheduleResult | null>(null);
@@ -109,8 +121,24 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
   const [formClass, setFormClass] = useState<string>('Kelas 10');
   const [formTutorName, setFormTutorName] = useState<string>('');
   const [formRoom, setFormRoom] = useState<string>('Gedung Utama PKBM');
+  const [isCustomRoom, setIsCustomRoom] = useState<boolean>(false);
   const [formSemester, setFormSemester] = useState<string>('Semester Ganjil 2026/2027');
   const [formNotes, setFormNotes] = useState<string>('');
+
+  // Periksa kesiapan tabel Supabase saat komponen dibuka
+  useEffect(() => {
+    fetchSchedulesOnline()
+      .then(res => {
+        if (res === null) {
+          setIsTableMissing(true);
+        } else {
+          setIsTableMissing(false);
+        }
+      })
+      .catch(() => {
+        setIsTableMissing(true);
+      });
+  }, []);
 
   // Handle CSV File Selection
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -231,30 +259,36 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
     try {
       const ok = await saveAllSchedulesOnline(schedules, true);
       if (ok) {
+        setIsTableMissing(false);
         setUploadFeedback({
           type: 'success',
           message: `Sukses! Seluruh ${schedules.length} jadwal semester berhasil disimpan dan disinkronkan ke database Supabase.`
         });
       } else {
+        setIsTableMissing(true);
         setUploadFeedback({
           type: 'error',
-          message: 'Tabel Supabase belum dibuat atau koneksi dialihkan aman ke penyimpanan lokal.'
+          message: 'Tabel "schedules" belum ada di Supabase. Klik "Script SQL Jadwal" untuk membuatnya dalam 1 menit.'
         });
       }
     } catch (e: any) {
+      setIsTableMissing(true);
       setUploadFeedback({
         type: 'error',
         message: `Gagal sinkronisasi Supabase: ${e?.message || 'Terjadi kesalahan'}`
       });
     } finally {
       setIsSyncingSupabase(false);
-      setTimeout(() => setUploadFeedback(null), 4000);
+      setTimeout(() => setUploadFeedback(null), 5000);
     }
   };
 
   // Buka Modal Tambah Manual
   const handleOpenAddModal = () => {
     const today = getWibToday();
+    const defaultRoom = (locations && locations.length > 0)
+      ? (locations.find(l => l.isMainBranch)?.name || locations[0].name)
+      : 'Gedung Utama PKBM';
     setEditingItem(null);
     setFormDate(today);
     setFormDay(getDayNameFromDateStr(today));
@@ -264,7 +298,8 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
     setFormSubject('');
     setFormClass('Kelas 10');
     setFormTutorName(tutors.length > 0 ? tutors[0].name : 'Tutor PKBM Bina Insani');
-    setFormRoom('Gedung Utama PKBM');
+    setFormRoom(defaultRoom);
+    setIsCustomRoom(false);
     setFormSemester('Semester Ganjil 2026/2027');
     setFormNotes('');
     setFormError(null);
@@ -274,6 +309,11 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
   // Buka Modal Edit Manual
   const handleOpenEditModal = (item: ScheduleItem) => {
     const itemDate = item.date || getWibToday();
+    const currentRoom = item.room || 'Gedung Utama PKBM';
+    const isMatched = (locations || []).some(
+      l => l.name.trim().toLowerCase() === currentRoom.trim().toLowerCase()
+    );
+
     setEditingItem(item);
     setFormDate(itemDate);
     setFormDay(item.dayOfWeek || getDayNameFromDateStr(itemDate));
@@ -283,7 +323,8 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
     setFormSubject(item.subjectTitle);
     setFormClass(item.classGroup);
     setFormTutorName(item.tutorName);
-    setFormRoom(item.room || 'Gedung Utama PKBM');
+    setFormRoom(currentRoom);
+    setIsCustomRoom(!isMatched && Boolean(item.room));
     setFormSemester(item.semester || 'Semester Ganjil 2026/2027');
     setFormNotes(item.notes || '');
     setFormError(null);
@@ -522,6 +563,25 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
 
           <div className="flex items-center gap-3 text-indigo-100 font-bold flex-wrap">
             <span>Total: <strong className="text-amber-300 text-sm font-black">{schedules.length}</strong> Sesi Terjadwal</span>
+            
+            {/* Status Supabase Pill */}
+            {isTableMissing === true ? (
+              <button
+                type="button"
+                onClick={() => setIsScheduleSqlModalOpen(true)}
+                className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/40 rounded-xl text-[11px] font-bold flex items-center gap-1.5 transition shadow-sm animate-pulse"
+                title="Tabel 'schedules' belum terpasang di Supabase. Klik untuk melihat script SQL."
+              >
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-300" />
+                <span>Script SQL Jadwal</span>
+              </button>
+            ) : isTableMissing === false ? (
+              <span className="px-2.5 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 rounded-xl text-[11px] font-bold flex items-center gap-1.5 shadow-sm">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Cloud Terhubung</span>
+              </span>
+            ) : null}
+
             <button
               onClick={handleSyncSchedulesToSupabase}
               disabled={isSyncingSupabase}
@@ -534,6 +594,48 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Banner Peringatan Jika Tabel schedules Belum Ada di Supabase */}
+      {isTableMissing && (
+        <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-3xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm animate-in fade-in">
+          <div className="flex items-start gap-3">
+            <div className="p-2 bg-amber-200/70 rounded-xl text-amber-800 shrink-0 mt-0.5">
+              <Database className="w-5 h-5 text-amber-800" />
+            </div>
+            <div>
+              <h4 className="font-extrabold text-amber-950 text-xs sm:text-sm flex items-center gap-2">
+                <span>Sinkronisasi Otomatis Supabase Belum Aktif</span>
+                <span className="text-[10px] bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full font-bold">
+                  Tabel 'schedules' Belum Ada
+                </span>
+              </h4>
+              <p className="text-[11px] text-amber-900 mt-0.5 leading-relaxed">
+                Jadwal KBM saat ini tersimpan di memori browser. Agar jadwal otomatis tersinkron dan tampil di semua akun tutor, jalankan script SQL tabel jadwal di database Supabase Anda (hanya 1 menit).
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={() => setIsScheduleSqlModalOpen(true)}
+              className="flex-1 sm:flex-none px-3.5 py-2 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm transition"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              <span>Lihat &amp; Salin Script SQL</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleSyncSchedulesToSupabase}
+              disabled={isSyncingSupabase}
+              className="px-3 py-2 bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition"
+              title="Cek koneksi dan sinkronkan sekarang"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingSupabase ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">Cek &amp; Sinkronkan</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Alert Feedback if any */}
       {uploadFeedback && (
@@ -1062,14 +1164,87 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
               {/* Ruang & Semester */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">Ruang / Tempat Belajar</label>
-                  <input
-                    type="text"
-                    placeholder="Gedung Utama PKBM / Lab"
-                    value={formRoom}
-                    onChange={(e) => setFormRoom(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-semibold text-slate-800"
-                  />
+                  <label className="block font-bold text-slate-700 mb-1 flex items-center justify-between">
+                    <span>Ruang / Tempat Belajar</span>
+                    {locations && locations.length > 0 && (
+                      <span className="text-[10px] text-indigo-600 font-bold bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
+                        {locations.length} Lokasi Terdaftar
+                      </span>
+                    )}
+                  </label>
+
+                  {locations && locations.length > 0 ? (
+                    <div className="space-y-1.5">
+                      <select
+                        value={isCustomRoom ? '__custom__' : formRoom}
+                        onChange={(e) => {
+                          if (e.target.value === '__custom__') {
+                            setIsCustomRoom(true);
+                          } else {
+                            setIsCustomRoom(false);
+                            setFormRoom(e.target.value);
+                          }
+                        }}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-xs sm:text-sm"
+                      >
+                        <optgroup label="Pilihan Ruang / Tempat Belajar (Sesuai Menu Lokasi)">
+                          {locations.map(loc => (
+                            <option key={loc.id} value={loc.name}>
+                              📍 {loc.name} {loc.isMainBranch ? '(Pusat)' : ''}
+                            </option>
+                          ))}
+                        </optgroup>
+                        <option value="__custom__">✏️ + Ketik Manual / Ruangan Khusus Lainnya...</option>
+                      </select>
+
+                      {/* Input manual jika memilih opsi custom */}
+                      {isCustomRoom && (
+                        <div className="pt-1 animate-in fade-in slide-in-from-top-1">
+                          <input
+                            type="text"
+                            placeholder="Ketik nama ruang / gedung khusus..."
+                            value={formRoom}
+                            onChange={(e) => setFormRoom(e.target.value)}
+                            required
+                            autoFocus
+                            className="w-full px-3 py-2 bg-white border-2 border-indigo-400 rounded-xl font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500 text-xs sm:text-sm"
+                          />
+                          <p className="text-[10px] text-slate-500 mt-0.5">
+                            * Contoh: Lab Komputer Lt. 2, Pendopo Kelurahan, Ruang Kesenian.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Detail ringkas lokasi terpilih */}
+                      {!isCustomRoom && (() => {
+                        const matchedLoc = locations.find(l => l.name === formRoom);
+                        if (!matchedLoc) return null;
+                        return (
+                          <div className="p-2 bg-indigo-50/80 border border-indigo-200/70 rounded-xl text-[11px] text-indigo-950 flex items-start gap-1.5">
+                            <MapPin className="w-3.5 h-3.5 text-indigo-600 shrink-0 mt-0.5" />
+                            <div className="leading-tight">
+                              <span className="font-bold">{matchedLoc.name}</span>
+                              {matchedLoc.address && <span className="text-slate-600"> &mdash; {matchedLoc.address}</span>}
+                              <span className="text-indigo-700 font-semibold ml-1">({matchedLoc.radiusMeters}m geofence)</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  ) : (
+                    <div>
+                      <input
+                        type="text"
+                        placeholder="Gedung Utama PKBM / Lab"
+                        value={formRoom}
+                        onChange={(e) => setFormRoom(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-semibold text-slate-800 text-xs sm:text-sm"
+                      />
+                      <p className="text-[10px] text-slate-500 mt-1">
+                        Tips: Atur titik lokasi di menu <strong>Lokasi</strong> agar otomatis muncul sebagai pilihan menu dropdown di sini.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -1079,7 +1254,7 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
                     placeholder="Semester Ganjil 2026/2027"
                     value={formSemester}
                     onChange={(e) => setFormSemester(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-semibold text-slate-800"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-semibold text-slate-800 text-xs sm:text-sm"
                   />
                 </div>
               </div>
@@ -1261,6 +1436,173 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
                 <CheckCircle2 className="w-3.5 h-3.5 text-amber-300" />
                 <span>Terapkan Contoh Jadwal</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Script SQL Supabase untuk Tabel schedules */}
+      {isScheduleSqlModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-indigo-200 space-y-4 max-h-[92vh] flex flex-col animate-in zoom-in-95">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-200">
+                  <Database className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-slate-900">
+                    Aktifkan Sinkronisasi Supabase Jadwal
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Jalankan script SQL ini di Supabase Dashboard agar jadwal otomatis tersinkron ke semua perangkat.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsScheduleSqlModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Langkah Singkat */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+              <div className="p-2.5 bg-indigo-50 border border-indigo-100 rounded-xl">
+                <span className="font-black text-indigo-700 block mb-0.5">1. Salin Script</span>
+                <span className="text-slate-600">Klik tombol <strong>Salin Script SQL</strong> di bawah.</span>
+              </div>
+              <div className="p-2.5 bg-indigo-50 border border-indigo-100 rounded-xl">
+                <span className="font-black text-indigo-700 block mb-0.5">2. Buka SQL Editor</span>
+                <span className="text-slate-600">Buka SQL Editor di Dashboard Supabase project Anda.</span>
+              </div>
+              <div className="p-2.5 bg-indigo-50 border border-indigo-100 rounded-xl">
+                <span className="font-black text-indigo-700 block mb-0.5">3. Paste &amp; Run</span>
+                <span className="text-slate-600">Tempel query, klik <strong>RUN</strong>, lalu klik Sinkronkan Jadwal.</span>
+              </div>
+            </div>
+
+            {/* Code Box */}
+            <div className="flex-1 overflow-hidden flex flex-col rounded-2xl border border-slate-800 bg-slate-900 text-slate-100">
+              <div className="px-4 py-2 bg-slate-950 flex items-center justify-between text-xs border-b border-slate-800">
+                <span className="font-mono text-indigo-300 font-bold">schedules_table.sql</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const sql = `-- ==============================================================================
+-- SKRIP TABEL JADWAL KBM (schedules) - PKBM BINA INSANI SUMOWONO
+-- Jalankan di Supabase Dashboard: SQL Editor -> New Query -> Run
+-- ==============================================================================
+
+CREATE TABLE IF NOT EXISTS public.schedules (
+    id TEXT PRIMARY KEY,
+    date TEXT NOT NULL,
+    day_of_week TEXT NOT NULL,
+    time_start TEXT NOT NULL,
+    time_end TEXT NOT NULL,
+    program TEXT NOT NULL,
+    subject_title TEXT NOT NULL,
+    class_group TEXT NOT NULL,
+    tutor_id TEXT,
+    tutor_name TEXT NOT NULL,
+    room TEXT DEFAULT 'Gedung Utama PKBM',
+    semester TEXT DEFAULT 'Semester Ganjil 2026/2027',
+    academic_year TEXT DEFAULT '2026/2027',
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
+);
+
+ALTER TABLE public.schedules ADD COLUMN IF NOT EXISTS academic_year TEXT DEFAULT '2026/2027';
+
+CREATE INDEX IF NOT EXISTS idx_schedules_date ON public.schedules (date ASC);
+CREATE INDEX IF NOT EXISTS idx_schedules_program ON public.schedules (program);
+
+ALTER TABLE public.schedules ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Anon public access for schedules" ON public.schedules;
+CREATE POLICY "Anon public access for schedules" ON public.schedules FOR ALL TO anon USING (true) WITH CHECK (true);
+
+DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.schedules; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+`;
+                    navigator.clipboard.writeText(sql);
+                    setSqlCopied(true);
+                    setTimeout(() => setSqlCopied(false), 2500);
+                  }}
+                  className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold flex items-center gap-1.5 transition"
+                >
+                  {sqlCopied ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{sqlCopied ? 'Tersalin!' : 'Salin SQL'}</span>
+                </button>
+              </div>
+              <pre className="p-3.5 font-mono text-[11px] overflow-auto flex-1 leading-relaxed text-slate-200">
+{`CREATE TABLE IF NOT EXISTS public.schedules (
+    id TEXT PRIMARY KEY,
+    date TEXT NOT NULL,
+    day_of_week TEXT NOT NULL,
+    time_start TEXT NOT NULL,
+    time_end TEXT NOT NULL,
+    program TEXT NOT NULL,
+    subject_title TEXT NOT NULL,
+    class_group TEXT NOT NULL,
+    tutor_id TEXT,
+    tutor_name TEXT NOT NULL,
+    room TEXT DEFAULT 'Gedung Utama PKBM',
+    semester TEXT DEFAULT 'Semester Ganjil 2026/2027',
+    academic_year TEXT DEFAULT '2026/2027',
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
+);
+
+ALTER TABLE public.schedules ADD COLUMN IF NOT EXISTS academic_year TEXT DEFAULT '2026/2027';
+
+CREATE INDEX IF NOT EXISTS idx_schedules_date ON public.schedules (date ASC);
+CREATE INDEX IF NOT EXISTS idx_schedules_program ON public.schedules (program);
+
+ALTER TABLE public.schedules ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Anon public access for schedules" ON public.schedules;
+CREATE POLICY "Anon public access for schedules" ON public.schedules FOR ALL TO anon USING (true) WITH CHECK (true);
+
+DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.schedules; EXCEPTION WHEN OTHERS THEN NULL; END $$;`}
+              </pre>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+              {onOpenSupabaseStatus && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsScheduleSqlModalOpen(false);
+                    onOpenSupabaseStatus();
+                  }}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-1"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Buka Status Semua Tabel Supabase</span>
+                </button>
+              )}
+              <div className="flex items-center gap-2 ml-auto">
+                <button
+                  type="button"
+                  onClick={() => setIsScheduleSqlModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition"
+                >
+                  Tutup
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await handleSyncSchedulesToSupabase();
+                    setIsScheduleSqlModalOpen(false);
+                  }}
+                  disabled={isSyncingSupabase}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl text-xs transition flex items-center gap-1.5 shadow-md"
+                >
+                  <Database className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>Cek &amp; Sinkronkan Sekarang</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

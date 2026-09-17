@@ -596,20 +596,17 @@ export async function upsertScheduleOnline(item: ScheduleItem): Promise<boolean>
 
 export async function saveAllSchedulesOnline(schedules: ScheduleItem[], replace: boolean = true): Promise<boolean> {
   try {
-    if (replace) {
-      // Hapus seluruh row terlebih dahulu agar sinkron bersih dengan data terbaru
-      const { error: delError } = await supabase
-        .from('schedules')
-        .delete()
-        .neq('id', '___non_existent_schedule_dummy_key___');
-      
-      if (delError) {
-        handleTableError('replace delete schedules', 'schedules', delError);
-        // Lanjutkan mencoba upsert/insert
-      }
-    }
-
     if (schedules.length === 0) {
+      if (replace) {
+        const { error: delError } = await supabase
+          .from('schedules')
+          .delete()
+          .neq('id', '___empty_reset___');
+        if (delError) {
+          handleTableError('delete all schedules', 'schedules', delError);
+          return false;
+        }
+      }
       missingTablesSet.delete('schedules');
       return true;
     }
@@ -625,6 +622,35 @@ export async function saveAllSchedulesOnline(schedules: ScheduleItem[], replace:
       if (insertError) {
         handleTableError('save batch schedules', 'schedules', insertError);
         return false;
+      }
+    }
+
+    // Jika replace: true, bersihkan item di cloud yang sudah tidak ada di list lokal
+    if (replace) {
+      try {
+        const currentIds = new Set(schedules.map(s => s.id));
+        const { data: existingRows } = await supabase
+          .from('schedules')
+          .select('id');
+        
+        if (existingRows && existingRows.length > 0) {
+          const obsoleteIds = existingRows
+            .map(r => r.id)
+            .filter(id => !currentIds.has(id));
+
+          if (obsoleteIds.length > 0) {
+            // Hapus chunk per 50
+            for (let j = 0; j < obsoleteIds.length; j += 50) {
+              const idsChunk = obsoleteIds.slice(j, j + 50);
+              await supabase
+                .from('schedules')
+                .delete()
+                .in('id', idsChunk);
+            }
+          }
+        }
+      } catch (delErr) {
+        console.warn('Note on clearing obsolete schedule records:', delErr);
       }
     }
 

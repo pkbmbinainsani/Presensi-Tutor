@@ -100,9 +100,13 @@ CREATE TABLE IF NOT EXISTS public.schedules (
     tutor_name TEXT NOT NULL,
     room TEXT DEFAULT 'Gedung Utama PKBM',
     semester TEXT DEFAULT 'Semester Ganjil 2026/2027',
+    academic_year TEXT DEFAULT '2026/2027',
     notes TEXT,
     created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
+
+-- Kolom migrasi jika tabel schedules versi awal sudah sempat dibuat
+ALTER TABLE public.schedules ADD COLUMN IF NOT EXISTS academic_year TEXT DEFAULT '2026/2027';
 
 CREATE INDEX IF NOT EXISTS idx_schedules_date ON public.schedules (date ASC);
 CREATE INDEX IF NOT EXISTS idx_schedules_program ON public.schedules (program);
