@@ -16,7 +16,8 @@ import {
   Camera,
   Database,
   RefreshCw,
-  CalendarRange
+  CalendarRange,
+  CalendarDays
 } from 'lucide-react';
 import { PKBM_CONFIG } from '../data/mockData';
 import { UserSession } from '../types';
@@ -68,6 +69,7 @@ export const Header: React.FC<HeaderProps> = ({
   const navItems = currentUser.role === 'admin' 
     ? [
         { id: 'rekapitulasi', label: 'Rekapitulasi Otomatis', icon: Table },
+        { id: 'jadwal-admin', label: 'Kelola Jadwal Semester', icon: CalendarDays },
         { id: 'lokasi', label: 'Pengaturan Lokasi', icon: MapPin },
         { id: 'cetak', label: 'Cetak Laporan', icon: Printer },
         { id: 'master', label: 'Data Tutor & Pegawai', icon: Users },
@@ -75,6 +77,7 @@ export const Header: React.FC<HeaderProps> = ({
       ]
     : [
         { id: 'presensi', label: 'Form Presensi Mandiri Tutor', icon: ClipboardCheck },
+        { id: 'jadwal-hari-ini', label: 'Jadwal Hari Ini', icon: CalendarDays },
         { id: 'rekap-tutor', label: 'Rekapitulasi Saya', icon: CalendarRange },
         { id: 'profil', label: 'Profil Saya & Foto', icon: User },
       ];

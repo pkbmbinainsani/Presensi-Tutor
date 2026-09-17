@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
-import { AttendanceRecord, Tutor, PKBMInfo, ClassLocation } from '../types';
-import { getWibDate, getWibTimeWithSuffix, formatTimeWibDisplay, getWibToday } from './dateUtils';
+import { AttendanceRecord, Tutor, PKBMInfo, ClassLocation, ScheduleItem, DayOfWeek } from '../types';
+import { getWibDate, getWibTimeWithSuffix, formatTimeWibDisplay, getWibToday, getDayNameFromDateStr } from './dateUtils';
 
 export const SUPABASE_URL = 'https://bjekrnawldsnbhtfelzk.supabase.co';
 export const SUPABASE_ANON_KEY = 'sb_publishable_PVBfQ9AcrdsDY6py_6syBg_JihWcuVU';
@@ -23,6 +23,7 @@ export interface SupabaseHealthStatus {
     class_locations: boolean;
     attendance_records: boolean;
     pkbm_info: boolean;
+    schedules: boolean;
   };
   missingTables: string[];
   error?: string;
@@ -61,22 +62,25 @@ export async function checkSupabaseHealth(): Promise<SupabaseHealthStatus> {
       class_locations: false,
       attendance_records: false,
       pkbm_info: false,
+      schedules: false,
     },
     missingTables: [],
   };
 
   try {
-    const [tutorsRes, locRes, attRes, pkbmRes] = await Promise.all([
+    const [tutorsRes, locRes, attRes, pkbmRes, schRes] = await Promise.all([
       supabase.from('tutors').select('id').limit(1),
       supabase.from('class_locations').select('id').limit(1),
       supabase.from('attendance_records').select('id').limit(1),
       supabase.from('pkbm_info').select('id').limit(1),
+      supabase.from('schedules').select('id').limit(1),
     ]);
 
     result.tables.tutors = !tutorsRes.error;
     result.tables.class_locations = !locRes.error;
     result.tables.attendance_records = !attRes.error;
     result.tables.pkbm_info = !pkbmRes.error;
+    result.tables.schedules = !schRes.error;
 
     if (!result.tables.tutors) {
       result.missingTables.push('tutors');
@@ -104,6 +108,13 @@ export async function checkSupabaseHealth(): Promise<SupabaseHealthStatus> {
       missingTablesSet.add('pkbm_info');
     } else {
       missingTablesSet.delete('pkbm_info');
+    }
+
+    if (!result.tables.schedules) {
+      result.missingTables.push('schedules');
+      missingTablesSet.add('schedules');
+    } else {
+      missingTablesSet.delete('schedules');
     }
 
     // Endpoint is reached and responding if we got any query response (even PGRST205 schema cache notification)
@@ -289,6 +300,48 @@ export function transformPKBMInfoToDb(info: PKBMInfo): any {
     center_coordinates: info.centerCoordinates,
     allowed_radius_meters: info.allowedRadiusMeters || 300,
     updated_at: new Date().toISOString(),
+  };
+}
+
+export function transformScheduleFromDb(row: any): ScheduleItem {
+  const dateVal = row.date ? getWibDate(row.date) : getWibToday();
+  const dayOfWeekVal = (row.day_of_week as DayOfWeek) || getDayNameFromDateStr(dateVal);
+
+  return {
+    id: row.id,
+    date: dateVal,
+    dayOfWeek: dayOfWeekVal,
+    timeStart: formatTimeWibDisplay(row.time_start || '08:00'),
+    timeEnd: formatTimeWibDisplay(row.time_end || '09:30'),
+    program: row.program || 'Paket C (Setara SMA)',
+    subjectTitle: row.subject_title || '',
+    classGroup: row.class_group || '',
+    tutorId: row.tutor_id || undefined,
+    tutorName: row.tutor_name || '',
+    room: row.room || '',
+    semester: row.semester || 'Semester Ganjil 2026/2027',
+    academicYear: row.academic_year || '2026/2027',
+    notes: row.notes || undefined,
+  };
+}
+
+export function transformScheduleToDb(item: ScheduleItem): any {
+  const dateStr = item.date ? getWibDate(item.date) : getWibToday();
+  return {
+    id: item.id,
+    date: dateStr,
+    day_of_week: item.dayOfWeek || getDayNameFromDateStr(dateStr),
+    time_start: formatTimeWibDisplay(item.timeStart),
+    time_end: formatTimeWibDisplay(item.timeEnd),
+    program: item.program,
+    subject_title: item.subjectTitle,
+    class_group: item.classGroup,
+    tutor_id: item.tutorId || null,
+    tutor_name: item.tutorName,
+    room: item.room || null,
+    semester: item.semester || 'Semester Ganjil 2026/2027',
+    academic_year: item.academicYear || '2026/2027',
+    notes: item.notes || null,
   };
 }
 
@@ -503,6 +556,125 @@ export async function upsertPKBMInfoOnline(info: PKBMInfo): Promise<boolean> {
 }
 
 // -------------------------------------------------------------
+// Schedules (Jadwal KBM 1 Semester Berbasis Tanggal)
+// -------------------------------------------------------------
+export async function fetchSchedulesOnline(): Promise<ScheduleItem[] | null> {
+  try {
+    const { data, error } = await supabase
+      .from('schedules')
+      .select('*')
+      .order('date', { ascending: true })
+      .order('time_start', { ascending: true });
+
+    if (error) {
+      handleTableError('fetch schedules', 'schedules', error);
+      return null;
+    }
+    missingTablesSet.delete('schedules');
+    return (data || []).map(transformScheduleFromDb);
+  } catch (e) {
+    handleTableError('fetch schedules exception', 'schedules', e);
+    return null;
+  }
+}
+
+export async function upsertScheduleOnline(item: ScheduleItem): Promise<boolean> {
+  try {
+    const payload = transformScheduleToDb(item);
+    const { error } = await supabase.from('schedules').upsert(payload);
+    if (error) {
+      handleTableError('upsert schedule', 'schedules', error);
+      return false;
+    }
+    missingTablesSet.delete('schedules');
+    return true;
+  } catch (e) {
+    handleTableError('upsert schedule exception', 'schedules', e);
+    return false;
+  }
+}
+
+export async function saveAllSchedulesOnline(schedules: ScheduleItem[], replace: boolean = true): Promise<boolean> {
+  try {
+    if (replace) {
+      // Hapus seluruh row terlebih dahulu agar sinkron bersih dengan data terbaru
+      const { error: delError } = await supabase
+        .from('schedules')
+        .delete()
+        .neq('id', '___non_existent_schedule_dummy_key___');
+      
+      if (delError) {
+        handleTableError('replace delete schedules', 'schedules', delError);
+        // Lanjutkan mencoba upsert/insert
+      }
+    }
+
+    if (schedules.length === 0) {
+      missingTablesSet.delete('schedules');
+      return true;
+    }
+
+    // Insert / Upsert batch (pecah menjadi chunk maks 50 per batch untuk efisiensi)
+    const chunkSize = 50;
+    for (let i = 0; i < schedules.length; i += chunkSize) {
+      const chunk = schedules.slice(i, i + chunkSize).map(transformScheduleToDb);
+      const { error: insertError } = await supabase
+        .from('schedules')
+        .upsert(chunk, { onConflict: 'id' });
+
+      if (insertError) {
+        handleTableError('save batch schedules', 'schedules', insertError);
+        return false;
+      }
+    }
+
+    missingTablesSet.delete('schedules');
+    return true;
+  } catch (e) {
+    handleTableError('save all schedules exception', 'schedules', e);
+    return false;
+  }
+}
+
+export async function deleteScheduleOnline(id: string): Promise<boolean> {
+  try {
+    const { error } = await supabase
+      .from('schedules')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      handleTableError('delete schedule', 'schedules', error);
+      return false;
+    }
+    missingTablesSet.delete('schedules');
+    return true;
+  } catch (e) {
+    handleTableError('delete schedule exception', 'schedules', e);
+    return false;
+  }
+}
+
+export async function clearAllSchedulesOnline(): Promise<boolean> {
+  try {
+    const { error } = await supabase
+      .from('schedules')
+      .delete()
+      .neq('id', '___non_existent_schedule_dummy_key___');
+
+    if (error) {
+      handleTableError('clear all schedules', 'schedules', error);
+      return false;
+    }
+    missingTablesSet.delete('schedules');
+    return true;
+  } catch (e) {
+    handleTableError('clear all schedules exception', 'schedules', e);
+    return false;
+  }
+}
+
+// -------------------------------------------------------------
 // Realtime Changes Listener
 // -------------------------------------------------------------
 export function subscribeToSupabaseChanges(onChange: (table: string) => void): () => void {
@@ -520,6 +692,9 @@ export function subscribeToSupabaseChanges(onChange: (table: string) => void): (
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'pkbm_info' }, () => {
         onChange('pkbm_info');
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, () => {
+        onChange('schedules');
       })
       .subscribe();
 

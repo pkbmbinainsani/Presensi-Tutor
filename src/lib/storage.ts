@@ -1,5 +1,7 @@
-import { AttendanceRecord, Tutor, PKBMInfo, ClassLocation } from '../types';
+import { AttendanceRecord, Tutor, PKBMInfo, ClassLocation, ScheduleItem } from '../types';
 import { INITIAL_TUTORS, PKBM_CONFIG, SAMPLE_ATTENDANCE_RECORDS, INITIAL_CLASS_LOCATIONS } from '../data/mockData';
+import { parseScheduleCsv, generateScheduleTemplateCsv } from './csvScheduleParser';
+import { getWibToday } from './dateUtils';
 import {
   fetchTutorsOnline,
   upsertTutorOnline,
@@ -11,7 +13,12 @@ import {
   insertAttendanceOnline,
   deleteAttendanceOnline,
   fetchPKBMInfoOnline,
-  upsertPKBMInfoOnline
+  upsertPKBMInfoOnline,
+  fetchSchedulesOnline,
+  upsertScheduleOnline,
+  saveAllSchedulesOnline,
+  deleteScheduleOnline,
+  clearAllSchedulesOnline
 } from './supabase';
 
 const STORAGE_KEYS = {
@@ -19,6 +26,7 @@ const STORAGE_KEYS = {
   TUTORS: 'pkbm_bina_insani_tutors_v2',
   CONFIG: 'pkbm_bina_insani_config_v2',
   LOCATIONS: 'pkbm_bina_insani_locations_v2',
+  SCHEDULES: 'pkbm_bina_insani_schedules_v1',
 };
 
 // Remove any lingering legacy dummy keys from older version v1
@@ -249,11 +257,104 @@ export function deleteClassLocation(id: string): void {
   });
 }
 
+// -------------------------------------------------------------------
+// Jadwal Kegiatan Belajar Mengajar (KBM) Semester
+// -------------------------------------------------------------------
+
+export function generateSampleSemesterSchedules(): ScheduleItem[] {
+  const csv = generateScheduleTemplateCsv();
+  const parsed = parseScheduleCsv(csv, getTutors());
+  return parsed.items;
+}
+
+export function getSchedules(): ScheduleItem[] {
+  try {
+    const data = localStorage.getItem(STORAGE_KEYS.SCHEDULES);
+    if (!data) {
+      // Inisialisasi otomatis dengan contoh jadwal semester resmi PKBM Bina Insani
+      const defaultSchedules = generateSampleSemesterSchedules();
+      localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(defaultSchedules));
+      return defaultSchedules;
+    }
+    const parsed: ScheduleItem[] = JSON.parse(data);
+    let needsUpdate = false;
+    const today = getWibToday();
+    const validated = parsed.map(item => {
+      if (!item.date) {
+        needsUpdate = true;
+        return {
+          ...item,
+          date: today
+        };
+      }
+      return item;
+    });
+    if (needsUpdate) {
+      saveSchedules(validated);
+    }
+    return validated;
+  } catch (error) {
+    console.warn('Note reading schedules cache:', error);
+    return [];
+  }
+}
+
+export function saveSchedules(schedules: ScheduleItem[]): void {
+  localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(schedules));
+  saveAllSchedulesOnline(schedules, true).catch(err => {
+    console.warn('Sync error saveAllSchedulesOnline:', err);
+  });
+}
+
+export function addScheduleItem(item: Omit<ScheduleItem, 'id'>): ScheduleItem {
+  const schedules = getSchedules();
+  const newItem: ScheduleItem = {
+    ...item,
+    id: `sch-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`
+  };
+  const updated = [newItem, ...schedules];
+  localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(updated));
+  upsertScheduleOnline(newItem).catch(err => {
+    console.warn('Sync error upsertScheduleOnline:', err);
+  });
+  return newItem;
+}
+
+export function updateScheduleItem(item: ScheduleItem): void {
+  const schedules = getSchedules();
+  const idx = schedules.findIndex(s => s.id === item.id);
+  if (idx !== -1) {
+    const updated = [...schedules];
+    updated[idx] = item;
+    localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(updated));
+    upsertScheduleOnline(item).catch(err => {
+      console.warn('Sync error upsertScheduleOnline:', err);
+    });
+  }
+}
+
+export function deleteScheduleItem(id: string): void {
+  const schedules = getSchedules();
+  const updated = schedules.filter(s => s.id !== id);
+  localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(updated));
+  deleteScheduleOnline(id).catch(err => {
+    console.warn('Sync error deleteScheduleOnline:', err);
+  });
+}
+
+export function clearAllSchedules(): void {
+  localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify([]));
+  clearAllSchedulesOnline().catch(err => {
+    console.warn('Sync error clearAllSchedulesOnline:', err);
+  });
+}
+
 export function resetToDefaultData(): void {
   localStorage.setItem(STORAGE_KEYS.ATTENDANCE, JSON.stringify([]));
   localStorage.setItem(STORAGE_KEYS.TUTORS, JSON.stringify(INITIAL_TUTORS));
   localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(PKBM_CONFIG));
   localStorage.setItem(STORAGE_KEYS.LOCATIONS, JSON.stringify(INITIAL_CLASS_LOCATIONS));
+  localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(generateSampleSemesterSchedules()));
 }
 
 // -------------------------------------------------------------------
@@ -264,20 +365,23 @@ export async function syncAllWithSupabase(): Promise<{
   locations: ClassLocation[];
   attendance: AttendanceRecord[];
   pkbmInfo: PKBMInfo;
+  schedules: ScheduleItem[];
   source: 'supabase' | 'cache';
 }> {
   try {
-    const [onlineTutors, onlineLocs, onlineAtt, onlineInfo] = await Promise.all([
+    const [onlineTutors, onlineLocs, onlineAtt, onlineInfo, onlineSchedules] = await Promise.all([
       fetchTutorsOnline(),
       fetchLocationsOnline(),
       fetchAttendanceOnline(),
       fetchPKBMInfoOnline(),
+      fetchSchedulesOnline(),
     ]);
 
     let loadedTutors = getTutors();
     let loadedLocs = getClassLocations();
     let loadedAtt = getAttendanceRecords();
     let loadedInfo = getPKBMInfo();
+    let loadedSchedules = getSchedules();
     let usedOnline = false;
 
     if (onlineTutors !== null) {
@@ -311,12 +415,29 @@ export async function syncAllWithSupabase(): Promise<{
       });
     }
 
+    if (onlineSchedules !== null) {
+      if (onlineSchedules.length > 0) {
+        loadedSchedules = onlineSchedules;
+        localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(onlineSchedules));
+        usedOnline = true;
+      } else if (onlineSchedules.length === 0 && loadedSchedules.length > 0) {
+        // Table exists but is empty online, auto-upload current local schedules
+        saveAllSchedulesOnline(loadedSchedules, false).catch(err => {
+          console.warn('Auto-upload schedules to Supabase note:', err);
+        });
+      } else {
+        loadedSchedules = [];
+        localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify([]));
+        usedOnline = true;
+      }
+    }
 
     return {
       tutors: loadedTutors,
       locations: loadedLocs,
       attendance: loadedAtt,
       pkbmInfo: loadedInfo,
+      schedules: loadedSchedules,
       source: usedOnline ? 'supabase' : 'cache',
     };
   } catch (err) {
@@ -326,6 +447,7 @@ export async function syncAllWithSupabase(): Promise<{
       locations: getClassLocations(),
       attendance: getAttendanceRecords(),
       pkbmInfo: getPKBMInfo(),
+      schedules: getSchedules(),
       source: 'cache',
     };
   }

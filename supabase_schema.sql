@@ -86,6 +86,27 @@ CREATE TABLE IF NOT EXISTS public.pkbm_info (
     updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
 
+-- 5. Tabel Jadwal Pembelajaran & KBM Berdasarkan Tanggal
+CREATE TABLE IF NOT EXISTS public.schedules (
+    id TEXT PRIMARY KEY,
+    date TEXT NOT NULL,
+    day_of_week TEXT NOT NULL,
+    time_start TEXT NOT NULL,
+    time_end TEXT NOT NULL,
+    program TEXT NOT NULL,
+    subject_title TEXT NOT NULL,
+    class_group TEXT NOT NULL,
+    tutor_id TEXT,
+    tutor_name TEXT NOT NULL,
+    room TEXT DEFAULT 'Gedung Utama PKBM',
+    semester TEXT DEFAULT 'Semester Ganjil 2026/2027',
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
+);
+
+CREATE INDEX IF NOT EXISTS idx_schedules_date ON public.schedules (date ASC);
+CREATE INDEX IF NOT EXISTS idx_schedules_program ON public.schedules (program);
+
 -- ==============================================================================
 -- AKTIFKAN ROW LEVEL SECURITY (RLS) & IZIN AKSES PUBLIK (ANON)
 -- ==============================================================================
@@ -93,6 +114,7 @@ ALTER TABLE public.tutors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.class_locations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.attendance_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pkbm_info ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.schedules ENABLE ROW LEVEL SECURITY;
 
 -- Kebijakan Akses Tutors
 DROP POLICY IF EXISTS "Anon public access for tutors" ON public.tutors;
@@ -112,6 +134,11 @@ CREATE POLICY "Anon public access for attendance_records" ON public.attendance_r
 -- Kebijakan Akses PKBM Info
 DROP POLICY IF EXISTS "Anon public access for pkbm_info" ON public.pkbm_info;
 CREATE POLICY "Anon public access for pkbm_info" ON public.pkbm_info 
+    FOR ALL TO anon USING (true) WITH CHECK (true);
+
+-- Kebijakan Akses Schedules
+DROP POLICY IF EXISTS "Anon public access for schedules" ON public.schedules;
+CREATE POLICY "Anon public access for schedules" ON public.schedules 
     FOR ALL TO anon USING (true) WITH CHECK (true);
 
 -- ==============================================================================
@@ -138,5 +165,11 @@ END $$;
 DO $$
 BEGIN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.pkbm_info;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.schedules;
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;

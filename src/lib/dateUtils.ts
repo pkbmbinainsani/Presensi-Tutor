@@ -237,3 +237,39 @@ export function getWibPresetRange(preset: WibPresetType): { startDate: string; e
 
   return { startDate: '', endDate: '' };
 }
+
+/**
+ * Normalisasi format string tanggal menjadi YYYY-MM-DD
+ * Mendukung format: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD
+ */
+export function normalizeDateString(raw: string): string | null {
+  if (!raw) return null;
+  const clean = raw.trim();
+
+  // Pattern YYYY-MM-DD atau YYYY/MM/DD
+  if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(clean)) {
+    const [y, m, d] = clean.split(/[-/]/).map(Number);
+    return `${y}-${padZero(m)}-${padZero(d)}`;
+  }
+
+  // Pattern DD-MM-YYYY atau DD/MM/YYYY
+  if (/^\d{1,2}[-/]\d{1,2}[-/]\d{4}$/.test(clean)) {
+    const [d, m, y] = clean.split(/[-/]/).map(Number);
+    return `${y}-${padZero(m)}-${padZero(d)}`;
+  }
+
+  return null;
+}
+
+/**
+ * Dapatkan nama hari bahasa Indonesia (Senin - Minggu) dari string tanggal YYYY-MM-DD
+ */
+export function getDayNameFromDateStr(dateStr: string): 'Senin' | 'Selasa' | 'Rabu' | 'Kamis' | 'Jumat' | 'Sabtu' | 'Minggu' {
+  if (!dateStr) return 'Senin';
+  const norm = normalizeDateString(dateStr);
+  if (!norm) return 'Senin';
+  const [y, m, d] = norm.split('-').map(Number);
+  const dateObj = new Date(y, m - 1, d, 12, 0, 0);
+  return (HARI_INDO[dateObj.getDay()] || 'Senin') as any;
+}
+

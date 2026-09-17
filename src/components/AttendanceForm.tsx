@@ -38,6 +38,15 @@ import { TutorProfileModal } from './TutorProfileModal';
 import { PhotoWatermarkModal } from './PhotoWatermarkModal';
 import { getWibToday, getWibTime, getWibTimeWithSuffix, formatWibDateIndo } from '../lib/dateUtils';
 
+export interface SchedulePrefill {
+  program?: ProgramType;
+  subjectTitle?: string;
+  classGroup?: string;
+  timeStart?: string;
+  timeEnd?: string;
+  notes?: string;
+}
+
 interface AttendanceFormProps {
   tutors: Tutor[];
   initialTutorId?: string;
@@ -46,6 +55,8 @@ interface AttendanceFormProps {
   classLocations?: ClassLocation[];
   onRecordCreated: (record: AttendanceRecord) => void;
   onTutorUpdated?: (tutor: Tutor) => void;
+  schedulePrefill?: SchedulePrefill | null;
+  onClearSchedulePrefill?: () => void;
 }
 
 const PROGRAM_OPTIONS: ProgramType[] = [
@@ -78,7 +89,9 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
   allRecords = [],
   classLocations = [],
   onRecordCreated,
-  onTutorUpdated
+  onTutorUpdated,
+  schedulePrefill,
+  onClearSchedulePrefill
 }) => {
   // Form State
   const defaultTutorId = initialTutorId || (currentUser?.role === 'tutor' ? currentUser.tutorId : '') || (tutors.length > 0 ? tutors[0].id : '');
@@ -92,6 +105,17 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
   const [studentCount, setStudentCount] = useState<number>(15);
   const [dutyType, setDutyType] = useState<'Reguler' | 'Dinas Luar'>('Reguler');
   const [activityNotes, setActivityNotes] = useState<string>('');
+
+  // Auto-fill from selected schedule in "Jadwal Hari Ini"
+  useEffect(() => {
+    if (schedulePrefill) {
+      if (schedulePrefill.date) setDate(schedulePrefill.date);
+      if (schedulePrefill.program) setProgram(schedulePrefill.program);
+      if (schedulePrefill.subjectTitle) setSubjectTitle(schedulePrefill.subjectTitle);
+      if (schedulePrefill.classGroup) setClassGroup(schedulePrefill.classGroup);
+      if (schedulePrefill.notes) setActivityNotes(schedulePrefill.notes);
+    }
+  }, [schedulePrefill]);
 
   // Enforce selectedTutorId if tutor role
   useEffect(() => {
@@ -703,6 +727,35 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
     <div className="max-w-5xl mx-auto space-y-6">
 
       <div ref={topAlertRef} />
+
+      {/* Schedule Prefill Active Banner */}
+      {schedulePrefill && (
+        <div className="bg-gradient-to-r from-indigo-950 via-blue-900 to-indigo-900 text-white p-4 rounded-2xl border-2 border-amber-400/80 shadow-lg flex items-center justify-between gap-3 animate-in fade-in">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-amber-400/20 text-amber-300 rounded-xl border border-amber-400/40 shrink-0">
+              <Sparkles className="w-5 h-5 text-amber-300" />
+            </div>
+            <div>
+              <p className="text-xs font-black text-amber-300 uppercase tracking-wider">
+                Presensi Terhubung dengan Jadwal Hari Ini
+              </p>
+              <p className="text-xs text-blue-100 mt-0.5">
+                Mata Pelajaran: <strong className="text-white">{schedulePrefill.subjectTitle}</strong> • Kelas: <strong className="text-white">{schedulePrefill.classGroup}</strong> ({schedulePrefill.program})
+              </p>
+            </div>
+          </div>
+          {onClearSchedulePrefill && (
+            <button
+              type="button"
+              onClick={onClearSchedulePrefill}
+              className="p-1.5 text-blue-200 hover:text-white hover:bg-white/10 rounded-xl transition"
+              title="Tutup Notifikasi Jadwal"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Tutor Already Completed Attendance Banner Notification (1x per Day Enforcement) */}
       {currentUser?.role === 'tutor' && hasSubmittedToday && latestTodayRecord && (

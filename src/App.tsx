@@ -10,7 +10,10 @@ import { AiAssistantModal } from './components/AiAssistantModal';
 import { SupabaseStatusModal } from './components/SupabaseStatusModal';
 import { TutorProfileModal } from './components/TutorProfileModal';
 import { TutorRekapitulasiView } from './components/TutorRekapitulasiView';
-import { AttendanceRecord, Tutor, UserSession, ClassLocation, PKBMInfo } from './types';
+import { TodayScheduleView } from './components/TodayScheduleView';
+import { AdminScheduleManager } from './components/AdminScheduleManager';
+import { SchedulePrefill } from './components/AttendanceForm';
+import { AttendanceRecord, Tutor, UserSession, ClassLocation, PKBMInfo, ScheduleItem } from './types';
 import { 
   getAttendanceRecords, 
   getTutors, 
@@ -19,7 +22,9 @@ import {
   getClassLocations, 
   saveClassLocations,
   getPKBMInfo,
-  syncAllWithSupabase
+  syncAllWithSupabase,
+  getSchedules,
+  saveSchedules
 } from './lib/storage';
 import { 
   subscribeToSupabaseChanges, 
@@ -40,6 +45,8 @@ export default function App() {
   const [tutors, setTutors] = useState<Tutor[]>([]);
   const [locations, setLocations] = useState<ClassLocation[]>([]);
   const [pkbmInfo, setPkbmInfo] = useState<PKBMInfo>(() => getPKBMInfo());
+  const [schedules, setSchedules] = useState<ScheduleItem[]>(() => getSchedules());
+  const [schedulePrefill, setSchedulePrefill] = useState<SchedulePrefill | null>(null);
 
   // Dynamically update document favicon in browser tab
   useEffect(() => {
@@ -60,6 +67,7 @@ export default function App() {
     setTutors(getTutors());
     setLocations(getClassLocations());
     setPkbmInfo(getPKBMInfo());
+    setSchedules(getSchedules());
   };
 
   const handleSyncOnline = async () => {
@@ -73,6 +81,9 @@ export default function App() {
       setLocations(result.locations);
       setAttendanceRecords(result.attendance);
       setPkbmInfo(result.pkbmInfo);
+      if (result.schedules) {
+        setSchedules(result.schedules);
+      }
     } catch (err) {
       console.warn('Sync error:', err);
     } finally {
@@ -197,6 +208,23 @@ export default function App() {
   const todayRecords = attendanceRecords.filter(r => r.date === todayStr);
   const todayStudentsCount = todayRecords.reduce((acc, curr) => acc + (curr.studentCount || 0), 0);
 
+  const handleSelectScheduleForAttendance = (item: ScheduleItem) => {
+    setSchedulePrefill({
+      program: item.program as any,
+      subjectTitle: item.subjectTitle,
+      classGroup: item.classGroup,
+      timeStart: item.timeStart,
+      timeEnd: item.timeEnd,
+      notes: item.notes
+    });
+    setActiveTab('presensi');
+  };
+
+  const handleSchedulesUpdated = (updated: ScheduleItem[]) => {
+    setSchedules(updated);
+    saveSchedules(updated);
+  };
+
   const isSupabaseReady = supabaseHealth && supabaseHealth.missingTables.length === 0;
 
   return (
@@ -256,6 +284,28 @@ export default function App() {
             classLocations={locations}
             onRecordCreated={handleRecordCreated}
             onTutorUpdated={handleTutorProfileUpdated}
+            schedulePrefill={schedulePrefill}
+            onClearSchedulePrefill={() => setSchedulePrefill(null)}
+          />
+        )}
+
+        {activeTab === 'jadwal-hari-ini' && (
+          <TodayScheduleView
+            schedules={schedules}
+            currentUser={currentUser}
+            allRecords={attendanceRecords}
+            tutors={tutors}
+            pkbmInfo={pkbmInfo}
+            onSelectForAttendance={handleSelectScheduleForAttendance}
+          />
+        )}
+
+        {activeTab === 'jadwal-admin' && currentUser.role === 'admin' && (
+          <AdminScheduleManager
+            schedules={schedules}
+            tutors={tutors}
+            pkbmInfo={pkbmInfo}
+            onSchedulesUpdated={handleSchedulesUpdated}
           />
         )}
 
