@@ -344,6 +344,8 @@ export default function App() {
           <RekapitulasiTable
             records={attendanceRecords}
             onDeleteRecord={handleDeleteRecord}
+            onRefreshOnline={handleSyncOnline}
+            isSyncing={isSyncing}
           />
         )}
 

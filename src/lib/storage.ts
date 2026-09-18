@@ -28,6 +28,8 @@ const STORAGE_KEYS = {
   LOCATIONS: 'pkbm_bina_insani_locations_v2',
   SCHEDULES: 'pkbm_bina_insani_schedules_v1',
   SCHEDULES_INITIALIZED: 'pkbm_bina_insani_schedules_init_v1',
+  DELETED_SCHEDULES: 'pkbm_bina_insani_deleted_schedules_tombstone_v1',
+  ALL_SCHEDULES_CLEARED: 'pkbm_bina_insani_all_schedules_cleared_v1',
 };
 
 // Remove any lingering legacy dummy keys from older version v1
@@ -43,6 +45,41 @@ try {
 // Synchronous Local Storage Access (Fast Read / Offline Cache)
 // -------------------------------------------------------------------
 
+// In-memory cache for base64 photos to prevent localStorage quota exhaustion (5MB limit)
+const attendancePhotoCache = new Map<string, string>();
+
+/**
+ * Safely saves attendance records to localStorage.
+ * If the payload exceeds the browser's 5MB localStorage quota (due to base64 images),
+ * it stores a slimmed metadata cache without bulky data URLs, ensuring all attendance rows
+ * are reliably preserved in local cache without crashing or throwing QuotaExceededError.
+ */
+export function saveAttendanceToLocalStorage(records: AttendanceRecord[]): void {
+  // 1. Always update the in-memory photo cache so the current session keeps all photos
+  records.forEach(r => {
+    if (r.id && r.photoUrl) {
+      attendancePhotoCache.set(r.id, r.photoUrl);
+    }
+  });
+
+  try {
+    // Attempt saving full records with photos
+    localStorage.setItem(STORAGE_KEYS.ATTENDANCE, JSON.stringify(records));
+  } catch (quotaErr) {
+    console.warn('localStorage quota exceeded for attendance records. Storing slim metadata cache (without bulky base64 data URLs) to preserve all rows reliably.');
+    try {
+      // Strip large photoUrl (> 500 chars, typical of base64 images) for the localStorage cache
+      const slimRecords = records.map(r => ({
+        ...r,
+        photoUrl: r.photoUrl && r.photoUrl.length > 500 ? '' : r.photoUrl,
+      }));
+      localStorage.setItem(STORAGE_KEYS.ATTENDANCE, JSON.stringify(slimRecords));
+    } catch (innerErr) {
+      console.warn('Could not write slim attendance cache to localStorage:', innerErr);
+    }
+  }
+}
+
 export function getAttendanceRecords(): AttendanceRecord[] {
   try {
     const data = localStorage.getItem(STORAGE_KEYS.ATTENDANCE);
@@ -53,10 +90,19 @@ export function getAttendanceRecords(): AttendanceRecord[] {
     const records: AttendanceRecord[] = JSON.parse(data);
     // Strip out any legacy sample/dummy records
     const cleanRecords = records.filter(r => !r.id.startsWith('att-10') && !r.id.startsWith('att-dummy'));
+    
+    // Hydrate any missing photoUrl from in-memory cache if available
+    const hydrated = cleanRecords.map(r => {
+      if (!r.photoUrl && attendancePhotoCache.has(r.id)) {
+        return { ...r, photoUrl: attendancePhotoCache.get(r.id)! };
+      }
+      return r;
+    });
+
     if (cleanRecords.length !== records.length) {
-      localStorage.setItem(STORAGE_KEYS.ATTENDANCE, JSON.stringify(cleanRecords));
+      saveAttendanceToLocalStorage(cleanRecords);
     }
-    return cleanRecords;
+    return hydrated;
   } catch (error) {
     console.warn('Note reading attendance records cache:', error);
     return [];
@@ -64,6 +110,7 @@ export function getAttendanceRecords(): AttendanceRecord[] {
 }
 
 export function clearAllAttendanceRecords(): void {
+  attendancePhotoCache.clear();
   localStorage.setItem(STORAGE_KEYS.ATTENDANCE, JSON.stringify([]));
 }
 
@@ -74,8 +121,11 @@ export function saveAttendanceRecord(newRecord: Omit<AttendanceRecord, 'id' | 'c
     id: 'att-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
     createdAt: new Date().toISOString()
   };
+  if (fullRecord.photoUrl) {
+    attendancePhotoCache.set(fullRecord.id, fullRecord.photoUrl);
+  }
   const updated = [fullRecord, ...records];
-  localStorage.setItem(STORAGE_KEYS.ATTENDANCE, JSON.stringify(updated));
+  saveAttendanceToLocalStorage(updated);
 
   // Asynchronously send to Supabase online database
   insertAttendanceOnline(fullRecord).catch(err => {
@@ -86,9 +136,10 @@ export function saveAttendanceRecord(newRecord: Omit<AttendanceRecord, 'id' | 'c
 }
 
 export function deleteAttendanceRecord(id: string): void {
+  attendancePhotoCache.delete(id);
   const records = getAttendanceRecords();
   const updated = records.filter(r => r.id !== id);
-  localStorage.setItem(STORAGE_KEYS.ATTENDANCE, JSON.stringify(updated));
+  saveAttendanceToLocalStorage(updated);
 
   // Asynchronously remove from Supabase
   deleteAttendanceOnline(id).catch(err => {
@@ -262,6 +313,85 @@ export function deleteClassLocation(id: string): void {
 // Jadwal Kegiatan Belajar Mengajar (KBM) Semester
 // -------------------------------------------------------------------
 
+export function makeScheduleSignature(item: { date?: string; timeStart?: string; subjectTitle?: string; classGroup?: string }): string {
+  const d = (item.date || '').trim();
+  const t = (item.timeStart || '').replace(/\s*WIB/i, '').trim();
+  const s = (item.subjectTitle || '').toLowerCase().trim();
+  const c = (item.classGroup || '').toLowerCase().trim();
+  return `${d}|${t}|${s}|${c}`;
+}
+
+export function getDeletedScheduleSignatures(): Set<string> {
+  try {
+    const data = localStorage.getItem(STORAGE_KEYS.DELETED_SCHEDULES);
+    if (!data) return new Set();
+    const arr: string[] = JSON.parse(data);
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch (e) {
+    return new Set();
+  }
+}
+
+export function addDeletedScheduleTombstone(
+  id: string, 
+  item?: { date?: string; timeStart?: string; subjectTitle?: string; classGroup?: string }
+): void {
+  try {
+    const current = getDeletedScheduleSignatures();
+    if (id && !id.startsWith('___')) {
+      current.add(id);
+    }
+    if (item && item.date && item.subjectTitle) {
+      const sig = makeScheduleSignature(item);
+      current.add(sig);
+      const coarseSig = `${(item.date || '').trim()}|${(item.subjectTitle || '').toLowerCase().trim()}|${(item.classGroup || '').toLowerCase().trim()}`;
+      current.add(coarseSig);
+    }
+    const arr = Array.from(current).slice(-400);
+    localStorage.setItem(STORAGE_KEYS.DELETED_SCHEDULES, JSON.stringify(arr));
+  } catch (e) {
+    console.warn('Note adding deleted schedule tombstone:', e);
+  }
+}
+
+export function isScheduleDeletedTombstone(item: ScheduleItem): boolean {
+  try {
+    const current = getDeletedScheduleSignatures();
+    if (item.id && current.has(item.id)) return true;
+    const sig = makeScheduleSignature(item);
+    if (current.has(sig)) return true;
+    const coarseSig = `${(item.date || '').trim()}|${(item.subjectTitle || '').toLowerCase().trim()}|${(item.classGroup || '').toLowerCase().trim()}`;
+    if (current.has(coarseSig)) return true;
+    return false;
+  } catch (e) {
+    return false;
+  }
+}
+
+export function clearDeletedScheduleTombstones(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEYS.DELETED_SCHEDULES);
+  } catch (e) {
+    // Ignore
+  }
+}
+
+export function removeDeletedScheduleTombstone(
+  item: { id?: string; date?: string; timeStart?: string; subjectTitle?: string; classGroup?: string }
+): void {
+  try {
+    const current = getDeletedScheduleSignatures();
+    if (item.id) current.delete(item.id);
+    if (item.date && item.subjectTitle) {
+      current.delete(makeScheduleSignature(item));
+      current.delete(`${(item.date || '').trim()}|${(item.subjectTitle || '').toLowerCase().trim()}|${(item.classGroup || '').toLowerCase().trim()}`);
+    }
+    localStorage.setItem(STORAGE_KEYS.DELETED_SCHEDULES, JSON.stringify(Array.from(current)));
+  } catch (e) {
+    // Ignore
+  }
+}
+
 export function deduplicateSchedules(list: ScheduleItem[]): ScheduleItem[] {
   const seen = new Set<string>();
   const result: ScheduleItem[] = [];
@@ -283,6 +413,11 @@ export function generateSampleSemesterSchedules(): ScheduleItem[] {
 
 export function getSchedules(): ScheduleItem[] {
   try {
+    const isAllCleared = localStorage.getItem(STORAGE_KEYS.ALL_SCHEDULES_CLEARED) === 'true';
+    if (isAllCleared) {
+      return [];
+    }
+
     const data = localStorage.getItem(STORAGE_KEYS.SCHEDULES);
     if (data === null) {
       const isInitialized = localStorage.getItem(STORAGE_KEYS.SCHEDULES_INITIALIZED) === 'true';
@@ -321,7 +456,13 @@ export function getSchedules(): ScheduleItem[] {
       return item;
     });
 
-    const deduplicated = deduplicateSchedules(validated);
+    // Singkirkan jadwal yang sudah dihapus oleh pengguna
+    const aliveItems = validated.filter(item => !isScheduleDeletedTombstone(item));
+    if (aliveItems.length !== validated.length) {
+      needsUpdate = true;
+    }
+
+    const deduplicated = deduplicateSchedules(aliveItems);
     if (needsUpdate || deduplicated.length !== validated.length) {
       localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(deduplicated));
     }
@@ -333,6 +474,7 @@ export function getSchedules(): ScheduleItem[] {
 }
 
 export function saveSchedules(schedules: ScheduleItem[]): void {
+  localStorage.removeItem(STORAGE_KEYS.ALL_SCHEDULES_CLEARED);
   const deduplicated = deduplicateSchedules(schedules);
   localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(deduplicated));
   localStorage.setItem(STORAGE_KEYS.SCHEDULES_INITIALIZED, 'true');
@@ -342,6 +484,9 @@ export function saveSchedules(schedules: ScheduleItem[]): void {
 }
 
 export function addScheduleItem(item: Omit<ScheduleItem, 'id'>): ScheduleItem {
+  localStorage.removeItem(STORAGE_KEYS.ALL_SCHEDULES_CLEARED);
+  removeDeletedScheduleTombstone(item);
+
   const schedules = getSchedules();
   const newItem: ScheduleItem = {
     ...item,
@@ -357,6 +502,9 @@ export function addScheduleItem(item: Omit<ScheduleItem, 'id'>): ScheduleItem {
 }
 
 export function updateScheduleItem(item: ScheduleItem): void {
+  localStorage.removeItem(STORAGE_KEYS.ALL_SCHEDULES_CLEARED);
+  removeDeletedScheduleTombstone(item);
+
   const schedules = getSchedules();
   const idx = schedules.findIndex(s => s.id === item.id);
   if (idx !== -1) {
@@ -377,7 +525,30 @@ export async function deleteScheduleItem(
 ): Promise<boolean> {
   const schedules = getSchedules();
   const targetItem = schedules.find(s => s.id === id);
-  const updated = schedules.filter(s => s.id !== id);
+
+  const targetDate = matchFilter?.date || targetItem?.date;
+  const targetTime = matchFilter?.timeStart || targetItem?.timeStart;
+  const targetTitle = matchFilter?.subjectTitle || targetItem?.subjectTitle;
+  const targetClass = matchFilter?.classGroup || targetItem?.classGroup;
+
+  // 1. Simpan tombstone permanen agar jadwal ini tidak bisa kembali lagi
+  addDeletedScheduleTombstone(id, {
+    date: targetDate,
+    timeStart: targetTime,
+    subjectTitle: targetTitle,
+    classGroup: targetClass,
+  });
+
+  // 2. Hapus dari daftar lokal (termasuk jika ada baris kembar identik)
+  const updated = schedules.filter(s => {
+    if (s.id === id) return false;
+    if (targetDate && targetTitle && s.date === targetDate && s.subjectTitle.toLowerCase().trim() === targetTitle.toLowerCase().trim()) {
+      const timeMatches = !targetTime || s.timeStart.replace(/\s*WIB/i, '').trim() === targetTime.replace(/\s*WIB/i, '').trim();
+      const classMatches = !targetClass || s.classGroup.toLowerCase().trim() === targetClass.toLowerCase().trim();
+      if (timeMatches && classMatches) return false;
+    }
+    return true;
+  });
 
   localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(updated));
   localStorage.setItem(STORAGE_KEYS.SCHEDULES_INITIALIZED, 'true');
@@ -390,12 +561,22 @@ export async function deleteScheduleItem(
     tutorName: targetItem.tutorName,
   } : undefined);
 
-  return await deleteScheduleOnline(id, filter);
+  // 3. Hapus spesifik di database online Supabase
+  const ok = await deleteScheduleOnline(id, filter);
+
+  // 4. Pastikan Supabase membersihkan seluruh ID usang yang sudah dihapus
+  saveAllSchedulesOnline(updated, true).catch(err => {
+    console.warn('Sync error saveAllSchedulesOnline after delete:', err);
+  });
+
+  return ok;
 }
 
 export async function clearAllSchedules(): Promise<boolean> {
   localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify([]));
   localStorage.setItem(STORAGE_KEYS.SCHEDULES_INITIALIZED, 'true');
+  localStorage.setItem(STORAGE_KEYS.ALL_SCHEDULES_CLEARED, 'true');
+  clearDeletedScheduleTombstones();
   return await clearAllSchedulesOnline();
 }
 
@@ -436,27 +617,50 @@ export async function syncAllWithSupabase(): Promise<{
 
     if (onlineTutors !== null) {
       loadedTutors = onlineTutors;
-      localStorage.setItem(STORAGE_KEYS.TUTORS, JSON.stringify(onlineTutors));
+      try {
+        localStorage.setItem(STORAGE_KEYS.TUTORS, JSON.stringify(onlineTutors));
+      } catch (err) {
+        console.warn('Could not cache tutors to localStorage:', err);
+      }
       usedOnline = true;
     }
 
     if (onlineLocs !== null) {
       if (onlineLocs.length > 0) {
         loadedLocs = onlineLocs;
-        localStorage.setItem(STORAGE_KEYS.LOCATIONS, JSON.stringify(onlineLocs));
+        try {
+          localStorage.setItem(STORAGE_KEYS.LOCATIONS, JSON.stringify(onlineLocs));
+        } catch (err) {
+          console.warn('Could not cache locations to localStorage:', err);
+        }
         usedOnline = true;
       }
     }
 
     if (onlineAtt !== null) {
       loadedAtt = onlineAtt;
-      localStorage.setItem(STORAGE_KEYS.ATTENDANCE, JSON.stringify(onlineAtt));
+      // Populate memory cache with full high-res photos
+      onlineAtt.forEach(r => {
+        if (r.id && r.photoUrl) {
+          attendancePhotoCache.set(r.id, r.photoUrl);
+        }
+      });
+      // Safely persist to local cache without crashing on 5MB quota
+      try {
+        saveAttendanceToLocalStorage(onlineAtt);
+      } catch (err) {
+        console.warn('Could not cache attendance to localStorage:', err);
+      }
       usedOnline = true;
     }
 
     if (onlineInfo !== null) {
       loadedInfo = onlineInfo;
-      localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(onlineInfo));
+      try {
+        localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(onlineInfo));
+      } catch (err) {
+        console.warn('Could not cache config to localStorage:', err);
+      }
       usedOnline = true;
     } else {
       // If table has not yet been seeded in Supabase, auto-seed default PKBM config online
@@ -466,11 +670,41 @@ export async function syncAllWithSupabase(): Promise<{
     }
 
     if (onlineSchedules !== null) {
-      // Supabase adalah satu-satunya sumber kebenaran (Source of Truth)
-      const deduplicated = deduplicateSchedules(onlineSchedules);
-      loadedSchedules = deduplicated;
-      localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(deduplicated));
-      localStorage.setItem(STORAGE_KEYS.SCHEDULES_INITIALIZED, 'true');
+      const isAllCleared = localStorage.getItem(STORAGE_KEYS.ALL_SCHEDULES_CLEARED) === 'true';
+      if (isAllCleared) {
+        if (onlineSchedules.length > 0) {
+          clearAllSchedulesOnline().catch(err => console.warn('Purge cleared schedules online:', err));
+        }
+        loadedSchedules = [];
+        localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify([]));
+        localStorage.setItem(STORAGE_KEYS.SCHEDULES_INITIALIZED, 'true');
+      } else {
+        // Singkirkan jadwal yang sudah dihapus oleh pengguna (tombstone)
+        const deadIds: string[] = [];
+        const aliveOnline = onlineSchedules.filter(item => {
+          if (isScheduleDeletedTombstone(item)) {
+            deadIds.push(item.id);
+            return false;
+          }
+          return true;
+        });
+
+        // Hapus sisa record di Supabase secara asinkron agar database bersih
+        if (deadIds.length > 0) {
+          for (const deadId of deadIds) {
+            deleteScheduleOnline(deadId).catch(err => console.warn('Auto-clean tombstoned online schedule:', err));
+          }
+        }
+
+        const deduplicated = deduplicateSchedules(aliveOnline);
+        loadedSchedules = deduplicated;
+        try {
+          localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(deduplicated));
+          localStorage.setItem(STORAGE_KEYS.SCHEDULES_INITIALIZED, 'true');
+        } catch (err) {
+          console.warn('Could not cache schedules to localStorage:', err);
+        }
+      }
       usedOnline = true;
     }
 

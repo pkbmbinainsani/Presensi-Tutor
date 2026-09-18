@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { X, MapPin, Calendar, Clock, User, Award, ShieldCheck, Download, ExternalLink, Maximize2, Smartphone, Monitor } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, MapPin, Calendar, Clock, User, Award, ShieldCheck, Download, ExternalLink, Maximize2, Smartphone, Monitor, Camera, Loader2 } from 'lucide-react';
 import { AttendanceRecord } from '../types';
 import { formatWibDateIndo, formatTimeWibDisplay } from '../lib/dateUtils';
+import { fetchAttendancePhotoOnline } from '../lib/supabase';
 
 interface PhotoWatermarkModalProps {
   record: AttendanceRecord | null;
@@ -11,7 +12,27 @@ interface PhotoWatermarkModalProps {
 export const PhotoWatermarkModal: React.FC<PhotoWatermarkModalProps> = ({ record, onClose }) => {
   if (!record) return null;
 
+  const [currentPhotoUrl, setCurrentPhotoUrl] = useState<string>(record.photoUrl || '');
+  const [isLoadingPhoto, setIsLoadingPhoto] = useState<boolean>(false);
   const [imgDimensions, setImgDimensions] = useState<{ width: number; height: number; isPortrait: boolean } | null>(null);
+
+  useEffect(() => {
+    if (!record) return;
+    if (record.photoUrl) {
+      setCurrentPhotoUrl(record.photoUrl);
+      return;
+    }
+    // If photoUrl was stripped for local storage quota, fetch on-demand from Supabase
+    setIsLoadingPhoto(true);
+    fetchAttendancePhotoOnline(record.id).then(url => {
+      if (url) {
+        setCurrentPhotoUrl(url);
+      }
+      setIsLoadingPhoto(false);
+    }).catch(() => {
+      setIsLoadingPhoto(false);
+    });
+  }, [record]);
 
   const formattedDate = formatWibDateIndo(record.date, 'withDay');
 
@@ -27,9 +48,9 @@ export const PhotoWatermarkModal: React.FC<PhotoWatermarkModalProps> = ({ record
   };
 
   const handleDownloadPhoto = () => {
-    if (!record.photoUrl) return;
+    if (!currentPhotoUrl) return;
     const link = document.createElement('a');
-    link.href = record.photoUrl;
+    link.href = currentPhotoUrl;
     const safeTutor = record.tutorName.replace(/[^a-zA-Z0-9]/g, '_');
     link.download = `Presensi_${safeTutor}_${record.date}_${imgDimensions?.isPortrait ? 'portrait' : 'landscape'}.jpg`;
     document.body.appendChild(link);
@@ -83,12 +104,24 @@ export const PhotoWatermarkModal: React.FC<PhotoWatermarkModalProps> = ({ record
         <div className="p-4 sm:p-6 space-y-5">
           {/* Photo Frame with Full Adaptive Orientation & Watermark Stamp Overlay */}
           <div className="relative rounded-2xl overflow-hidden border-2 border-slate-900 shadow-xl bg-slate-950 group flex flex-col items-center justify-center min-h-[260px]">
-            <img
-              src={record.photoUrl}
-              alt={record.subjectTitle}
-              onLoad={handleImageLoad}
-              className="max-h-[60vh] sm:max-h-[65vh] w-auto max-w-full object-contain mx-auto rounded-xl transition-all duration-300"
-            />
+            {isLoadingPhoto ? (
+              <div className="py-20 flex flex-col items-center justify-center text-emerald-400 gap-3">
+                <Loader2 className="w-8 h-8 animate-spin" />
+                <p className="text-xs text-slate-300 font-medium">Mengunduh foto dokumentasi dari Supabase...</p>
+              </div>
+            ) : currentPhotoUrl ? (
+              <img
+                src={currentPhotoUrl}
+                alt={record.subjectTitle}
+                onLoad={handleImageLoad}
+                className="max-h-[60vh] sm:max-h-[65vh] w-auto max-w-full object-contain mx-auto rounded-xl transition-all duration-300"
+              />
+            ) : (
+              <div className="py-16 flex flex-col items-center justify-center text-slate-400 gap-2">
+                <Camera className="w-12 h-12 opacity-50" />
+                <p className="text-xs text-slate-400">Foto kegiatan tidak dilampirkan atau belum tersedia</p>
+              </div>
+            )}
 
             {/* Official Stamped Info Bar */}
             <div className="w-full bg-slate-900 border-t border-slate-800 p-3 sm:p-4 text-white">

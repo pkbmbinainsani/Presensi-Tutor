@@ -13,7 +13,10 @@ import {
   AlertTriangle,
   FileSpreadsheet,
   CheckCircle2,
-  Clock
+  Clock,
+  RefreshCw,
+  Info,
+  Camera
 } from 'lucide-react';
 import { AttendanceRecord, FilterState, ProgramType } from '../types';
 import { PhotoWatermarkModal } from './PhotoWatermarkModal';
@@ -22,12 +25,17 @@ import { getWibToday, getWibPresetRange, formatWibDateIndo, formatTimeWibDisplay
 interface RekapitulasiTableProps {
   records: AttendanceRecord[];
   onDeleteRecord: (id: string) => void;
+  onRefreshOnline?: () => Promise<void> | void;
+  isSyncing?: boolean;
 }
 
 export const RekapitulasiTable: React.FC<RekapitulasiTableProps> = ({
   records,
-  onDeleteRecord
+  onDeleteRecord,
+  onRefreshOnline,
+  isSyncing = false
 }) => {
+  const thisMonthRange = useMemo(() => getWibPresetRange('thisMonth'), []);
   const todayStr = useMemo(() => getWibToday(), []);
 
   const [filters, setFilters] = useState<FilterState>({
@@ -35,8 +43,8 @@ export const RekapitulasiTable: React.FC<RekapitulasiTableProps> = ({
     tutorId: 'ALL',
     program: 'ALL',
     monthYear: '',
-    startDate: todayStr,
-    endDate: todayStr,
+    startDate: thisMonthRange.startDate,
+    endDate: thisMonthRange.endDate,
     status: 'ALL'
   });
 
@@ -52,6 +60,26 @@ export const RekapitulasiTable: React.FC<RekapitulasiTableProps> = ({
       monthYear: ''
     }));
   };
+
+  // Detect active preset for button styling
+  const activePreset = useMemo(() => {
+    const today = getWibPresetRange('today');
+    const thisMonth = getWibPresetRange('thisMonth');
+    const last3Months = getWibPresetRange('last3Months');
+    const thisYear = getWibPresetRange('thisYear');
+
+    if (!filters.startDate && !filters.endDate && !filters.monthYear) return 'all';
+    if (filters.startDate === today.startDate && filters.endDate === today.endDate) return 'today';
+    if (filters.startDate === thisMonth.startDate && filters.endDate === thisMonth.endDate) return 'thisMonth';
+    if (filters.startDate === last3Months.startDate && filters.endDate === last3Months.endDate) return 'last3Months';
+    if (filters.startDate === thisYear.startDate && filters.endDate === thisYear.endDate) return 'thisYear';
+    return 'custom';
+  }, [filters.startDate, filters.endDate, filters.monthYear]);
+
+  // Count records outside of today within this month
+  const otherMonthRecordsCount = useMemo(() => {
+    return records.filter(r => r.date !== todayStr && r.date >= thisMonthRange.startDate && r.date <= thisMonthRange.endDate).length;
+  }, [records, todayStr, thisMonthRange]);
 
   // Human-friendly Period Label
   const periodLabel = useMemo(() => {
@@ -245,15 +273,30 @@ export const RekapitulasiTable: React.FC<RekapitulasiTableProps> = ({
             />
           </div>
 
-          {/* Export CSV Button */}
-          <button
-            onClick={exportToCSV}
-            disabled={filteredRecords.length === 0}
-            className="bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow flex items-center justify-center gap-2 transition-all active:scale-95 shrink-0"
-          >
-            <FileSpreadsheet className="w-4 h-4" />
-            Ekspor CSV Excel
-          </button>
+          {/* Action Buttons: Sync Supabase & Export CSV */}
+          <div className="flex items-center gap-2">
+            {onRefreshOnline && (
+              <button
+                type="button"
+                onClick={onRefreshOnline}
+                disabled={isSyncing}
+                className="bg-white hover:bg-emerald-50 border border-emerald-300 text-emerald-800 disabled:opacity-50 text-xs font-bold px-3.5 py-2.5 rounded-xl shadow-sm flex items-center justify-center gap-2 transition-all active:scale-95 shrink-0"
+                title="Muat ulang dan sinkronkan data presensi terbaru langsung dari database Supabase"
+              >
+                <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin text-emerald-600' : 'text-emerald-700'}`} />
+                <span>{isSyncing ? 'Menyinkronkan...' : 'Sinkron Supabase'}</span>
+              </button>
+            )}
+
+            <button
+              onClick={exportToCSV}
+              disabled={filteredRecords.length === 0}
+              className="bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow flex items-center justify-center gap-2 transition-all active:scale-95 shrink-0"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              Ekspor CSV Excel
+            </button>
+          </div>
 
         </div>
 
@@ -286,7 +329,7 @@ export const RekapitulasiTable: React.FC<RekapitulasiTableProps> = ({
                 onChange={(e) => setFilters(prev => ({ ...prev, tutorId: e.target.value }))}
                 className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2 font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                <option value="ALL">Semua Tutor</option>
+                <option value="ALL">Semua Tutor ({uniqueTutors.length})</option>
                 {uniqueTutors.map(t => (
                   <option key={t.id} value={t.id}>{t.name}</option>
                 ))}
@@ -348,9 +391,9 @@ export const RekapitulasiTable: React.FC<RekapitulasiTableProps> = ({
                   type="button"
                   onClick={() => setPresetPeriod('today')}
                   className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border shadow-sm transition-all ${
-                    filters.startDate === todayStr && filters.endDate === todayStr
+                    activePreset === 'today'
                       ? 'bg-emerald-700 text-white border-emerald-800'
-                      : 'bg-emerald-50 hover:bg-emerald-600 hover:text-white text-emerald-900 border-emerald-200'
+                      : 'bg-white hover:bg-emerald-50 text-slate-700 border-slate-200'
                   }`}
                 >
                   ⚡ Hari Ini
@@ -358,33 +401,68 @@ export const RekapitulasiTable: React.FC<RekapitulasiTableProps> = ({
                 <button
                   type="button"
                   onClick={() => setPresetPeriod('thisMonth')}
-                  className="px-2.5 py-1 bg-white hover:bg-emerald-600 hover:text-white text-slate-700 text-[11px] font-bold rounded-lg border border-slate-200 shadow-sm transition-all"
+                  className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border shadow-sm transition-all ${
+                    activePreset === 'thisMonth'
+                      ? 'bg-emerald-700 text-white border-emerald-800'
+                      : 'bg-white hover:bg-emerald-50 text-slate-700 border-slate-200'
+                  }`}
                 >
                   Bulan Ini
                 </button>
                 <button
                   type="button"
                   onClick={() => setPresetPeriod('last3Months')}
-                  className="px-2.5 py-1 bg-white hover:bg-emerald-600 hover:text-white text-slate-700 text-[11px] font-bold rounded-lg border border-slate-200 shadow-sm transition-all"
+                  className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border shadow-sm transition-all ${
+                    activePreset === 'last3Months'
+                      ? 'bg-emerald-700 text-white border-emerald-800'
+                      : 'bg-white hover:bg-emerald-50 text-slate-700 border-slate-200'
+                  }`}
                 >
                   3 Bulan
                 </button>
                 <button
                   type="button"
                   onClick={() => setPresetPeriod('thisYear')}
-                  className="px-2.5 py-1 bg-white hover:bg-emerald-600 hover:text-white text-slate-700 text-[11px] font-bold rounded-lg border border-slate-200 shadow-sm transition-all"
+                  className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border shadow-sm transition-all ${
+                    activePreset === 'thisYear'
+                      ? 'bg-emerald-700 text-white border-emerald-800'
+                      : 'bg-white hover:bg-emerald-50 text-slate-700 border-slate-200'
+                  }`}
                 >
                   Tahun Ini
                 </button>
                 <button
                   type="button"
                   onClick={() => setPresetPeriod('all')}
-                  className="px-2.5 py-1 bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-800 text-[11px] font-bold rounded-lg border border-rose-200 shadow-sm transition-all"
+                  className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border shadow-sm transition-all ${
+                    activePreset === 'all'
+                      ? 'bg-rose-700 text-white border-rose-800'
+                      : 'bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-200'
+                  }`}
                 >
                   Semua Tanggal
                 </button>
               </div>
             </div>
+
+            {/* Smart Notice if filtered to Today but there are other presensi records this month */}
+            {activePreset === 'today' && otherMonthRecordsCount > 0 && (
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 mt-2">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <Info className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>
+                    Menampilkan <strong>{filteredRecords.length} presensi hari ini</strong>. Terdapat <strong>{otherMonthRecordsCount} presensi di tanggal lain</strong> pada bulan ini.
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPresetPeriod('thisMonth')}
+                  className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-[11px] shrink-0 transition-colors shadow-sm"
+                >
+                  Tampilkan Semua Bulan Ini ({records.length} Data)
+                </button>
+              </div>
+            )}
           </div>
 
         </div>
@@ -419,7 +497,26 @@ export const RekapitulasiTable: React.FC<RekapitulasiTableProps> = ({
               {filteredRecords.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-12 text-center text-slate-400 font-medium">
-                    Belum ada data presensi yang sesuai dengan kriteria filter.
+                    <p className="mb-2">Belum ada data presensi yang sesuai dengan kriteria filter ({periodLabel}).</p>
+                    {records.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setPresetPeriod('thisMonth')}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs inline-flex items-center gap-1.5 transition-colors shadow-sm"
+                      >
+                        Tampilkan Seluruh Presensi Bulan Ini ({records.length} Data)
+                      </button>
+                    ) : onRefreshOnline ? (
+                      <button
+                        type="button"
+                        onClick={onRefreshOnline}
+                        disabled={isSyncing}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs inline-flex items-center gap-1.5 transition-colors shadow-sm"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                        Sinkronkan Presensi dari Supabase
+                      </button>
+                    ) : null}
                   </td>
                 </tr>
               ) : (
@@ -429,12 +526,23 @@ export const RekapitulasiTable: React.FC<RekapitulasiTableProps> = ({
                     {/* Waktu & Foto Thumbnail */}
                     <td className="py-3.5 px-4">
                       <div className="flex items-center gap-3">
-                        <img
-                          src={r.photoUrl}
-                          alt={r.subjectTitle}
-                          className="w-12 h-12 rounded-xl object-cover border border-slate-300 shadow-sm shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
-                          onClick={() => setSelectedRecordForModal(r)}
-                        />
+                        {r.photoUrl ? (
+                          <img
+                            src={r.photoUrl}
+                            alt={r.subjectTitle}
+                            className="w-12 h-12 rounded-xl object-cover border border-slate-300 shadow-sm shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+                            onClick={() => setSelectedRecordForModal(r)}
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedRecordForModal(r)}
+                            className="w-12 h-12 rounded-xl bg-slate-100 hover:bg-emerald-50 border border-slate-300 flex flex-col items-center justify-center text-slate-400 hover:text-emerald-600 shrink-0 transition-colors"
+                            title="Buka Foto / Dokumentasi"
+                          >
+                            <Camera className="w-5 h-5" />
+                          </button>
+                        )}
                         <div>
                           <p className="font-bold text-slate-900">{formatWibDateIndo(r.date, 'short')}</p>
                           <p className="text-[11px] text-slate-500 flex items-center gap-1 font-mono">

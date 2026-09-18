@@ -43,7 +43,8 @@ import {
   deleteScheduleItem, 
   clearAllSchedules, 
   generateSampleSemesterSchedules,
-  deduplicateSchedules
+  deduplicateSchedules,
+  clearDeletedScheduleTombstones
 } from '../lib/storage';
 import { saveAllSchedulesOnline, fetchSchedulesOnline } from '../lib/supabase';
 import { getWibToday, getDayNameFromDateStr } from '../lib/dateUtils';
@@ -187,13 +188,14 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
 
     let updatedList: ScheduleItem[];
     if (uploadMode === 'replace') {
+      clearDeletedScheduleTombstones();
       updatedList = deduplicateSchedules(parsedCsvResult.items);
     } else {
       updatedList = deduplicateSchedules([...schedules, ...parsedCsvResult.items]);
     }
 
     saveSchedules(updatedList);
-    onSchedulesUpdated(updatedList, false);
+    onSchedulesUpdated(updatedList, true);
     const importedCount = parsedCsvResult.items.length;
     setParsedCsvResult(null);
     setIsUploadingCsv(false);
@@ -258,9 +260,10 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
   };
 
   const executeLoadSampleSemester = () => {
+    clearDeletedScheduleTombstones();
     const sample = generateSampleSemesterSchedules();
     saveSchedules(sample);
-    onSchedulesUpdated(sample);
+    onSchedulesUpdated(sample, true);
     setIsConfirmSampleOpen(false);
     setUploadFeedback({
       type: 'success',
@@ -425,18 +428,33 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
     setIsDeletingItem(true);
     try {
       const targetId = confirmDeleteItem.id;
-      const targetTitle = confirmDeleteItem.title;
-      const targetDate = confirmDeleteItem.date;
-      const targetTime = confirmDeleteItem.time ? confirmDeleteItem.time.split('-')[0].trim() : undefined;
+      const targetItem = schedules.find(s => s.id === targetId);
+      const targetTitle = confirmDeleteItem.title || targetItem?.subjectTitle;
+      const targetDate = confirmDeleteItem.date || targetItem?.date;
+      const targetTime = confirmDeleteItem.time ? confirmDeleteItem.time.split('-')[0].trim() : targetItem?.timeStart;
+      const targetClass = targetItem?.classGroup;
+      const targetTutor = targetItem?.tutorName;
 
       await deleteScheduleItem(targetId, {
         date: targetDate,
         timeStart: targetTime,
         subjectTitle: targetTitle,
+        classGroup: targetClass,
+        tutorName: targetTutor,
       });
 
-      const updated = schedules.filter(s => s.id !== targetId);
-      onSchedulesUpdated(updated, false);
+      // Filter target ID dan record identik jika ada kembaran ganda
+      const updated = schedules.filter(s => {
+        if (s.id === targetId) return false;
+        if (targetDate && targetTitle && s.date === targetDate && s.subjectTitle.toLowerCase().trim() === targetTitle.toLowerCase().trim()) {
+          const timeMatches = !targetTime || s.timeStart.replace(/\s*WIB/i, '').trim() === targetTime.replace(/\s*WIB/i, '').trim();
+          const classMatches = !targetClass || s.classGroup.toLowerCase().trim() === targetClass.toLowerCase().trim();
+          if (timeMatches && classMatches) return false;
+        }
+        return true;
+      });
+
+      onSchedulesUpdated(updated, true);
       setConfirmDeleteItem(null);
       setUploadFeedback({
         type: 'success',
@@ -501,7 +519,7 @@ export const AdminScheduleManager: React.FC<AdminScheduleManagerProps> = ({
   const handleCleanDuplicates = () => {
     const cleaned = deduplicateSchedules(schedules);
     saveSchedules(cleaned);
-    onSchedulesUpdated(cleaned, false);
+    onSchedulesUpdated(cleaned, true);
     setUploadFeedback({
       type: 'success',
       message: `Berhasil membersihkan ${duplicateInfo.count} jadwal ganda. Data kini bersih dan teratur.`

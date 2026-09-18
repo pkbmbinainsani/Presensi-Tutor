@@ -503,6 +503,22 @@ export async function deleteAttendanceOnline(id: string): Promise<boolean> {
   }
 }
 
+export async function fetchAttendancePhotoOnline(id: string): Promise<string | null> {
+  try {
+    const { data, error } = await supabase
+      .from('attendance_records')
+      .select('photo_url')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error || !data) return null;
+    return data.photo_url || null;
+  } catch (e) {
+    console.warn('fetchAttendancePhotoOnline exception:', e);
+    return null;
+  }
+}
+
 // PKBM Info
 export async function fetchPKBMInfoOnline(): Promise<PKBMInfo | null> {
   try {
@@ -707,28 +723,40 @@ export async function deleteScheduleOnline(
   matchFilter?: { date?: string; timeStart?: string; subjectTitle?: string; classGroup?: string; tutorName?: string }
 ): Promise<boolean> {
   try {
-    setScheduleMutationInProgress(3000);
+    setScheduleMutationInProgress(6000);
 
-    // 1. Hapus berdasarkan ID utama
-    const { error } = await supabase
-      .from('schedules')
-      .delete()
-      .eq('id', id);
+    let idDeleteSuccess = false;
 
-    if (error) {
-      handleTableError('delete schedule', 'schedules', error);
-      return false;
+    // 1. Hapus berdasarkan ID utama jika ID valid
+    if (id && !id.startsWith('___')) {
+      const { error } = await supabase
+        .from('schedules')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        handleTableError('delete schedule', 'schedules', error);
+      } else {
+        idDeleteSuccess = true;
+      }
     }
 
-    // 2. Jika disediakan matchFilter, bersihkan juga record duplikat identik di Supabase (jika ada)
-    if (matchFilter && matchFilter.date && matchFilter.timeStart && matchFilter.subjectTitle) {
+    // 2. Jika disediakan matchFilter, bersihkan juga record duplikat / variasi di Supabase
+    if (matchFilter && matchFilter.date && matchFilter.subjectTitle) {
       try {
         let query = supabase
           .from('schedules')
           .delete()
           .eq('date', matchFilter.date)
-          .eq('time_start', formatTimeWibDisplay(matchFilter.timeStart))
           .eq('subject_title', matchFilter.subjectTitle);
+
+        if (matchFilter.timeStart) {
+          const rawTime = matchFilter.timeStart.trim();
+          const cleanTime = rawTime.replace(/\s*WIB/i, '').trim();
+          const wibTime = `${cleanTime} WIB`;
+          const timeCandidates = Array.from(new Set([rawTime, cleanTime, wibTime])).filter(Boolean);
+          query = query.in('time_start', timeCandidates);
+        }
 
         if (matchFilter.classGroup) {
           query = query.eq('class_group', matchFilter.classGroup);
