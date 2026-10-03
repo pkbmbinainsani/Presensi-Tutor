@@ -16,6 +16,7 @@ import { SchedulePrefill } from './components/AttendanceForm';
 import { AttendanceRecord, Tutor, UserSession, ClassLocation, PKBMInfo, ScheduleItem } from './types';
 import { 
   getAttendanceRecords, 
+  saveAttendanceToLocalStorage,
   getTutors, 
   deleteAttendanceRecord, 
   resetToDefaultData, 
@@ -144,12 +145,18 @@ export default function App() {
             const newRec = eventInfo.newRecord as AttendanceRecord;
             setAttendanceRecords(prev => {
               if (prev.some(r => r.id === newRec.id)) return prev;
-              return [newRec, ...prev];
+              const next = [newRec, ...prev];
+              saveAttendanceToLocalStorage(next);
+              return next;
             });
             setNewAttendanceAlert({ record: newRec, timestamp: Date.now() });
             setLastAttendanceSyncedAt(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
           } else if (eventInfo?.eventType === 'DELETE' && eventInfo.oldRecord?.id) {
-            setAttendanceRecords(prev => prev.filter(r => r.id !== eventInfo.oldRecord.id));
+            setAttendanceRecords(prev => {
+              const next = prev.filter(r => r.id !== eventInfo.oldRecord.id);
+              saveAttendanceToLocalStorage(next);
+              return next;
+            });
           } else {
             handleSyncAttendanceOnly();
           }
@@ -167,12 +174,18 @@ export default function App() {
       if (msg.type === 'INSERT') {
         setAttendanceRecords(prev => {
           if (prev.some(r => r.id === msg.record.id)) return prev;
-          return [msg.record, ...prev];
+          const next = [msg.record, ...prev];
+          saveAttendanceToLocalStorage(next);
+          return next;
         });
         setNewAttendanceAlert({ record: msg.record, timestamp: Date.now() });
         setLastAttendanceSyncedAt(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
       } else if (msg.type === 'DELETE') {
-        setAttendanceRecords(prev => prev.filter(r => r.id !== msg.id));
+        setAttendanceRecords(prev => {
+          const next = prev.filter(r => r.id !== msg.id);
+          saveAttendanceToLocalStorage(next);
+          return next;
+        });
       } else if (msg.type === 'RELOAD') {
         handleSyncAttendanceOnly();
       }

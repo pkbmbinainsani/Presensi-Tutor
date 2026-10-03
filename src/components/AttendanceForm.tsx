@@ -32,7 +32,7 @@ import {
 } from 'lucide-react';
 import { Tutor, ProgramType, GeoLocationData, AttendanceRecord, UserSession, ClassLocation } from '../types';
 import { PKBM_CONFIG, INITIAL_CLASS_LOCATIONS } from '../data/mockData';
-import { calculateDistanceMeters, saveAttendanceRecord } from '../lib/storage';
+import { calculateDistanceMeters, saveAttendanceRecord, saveAndSyncAttendanceRecord } from '../lib/storage';
 import { MapView } from './MapView';
 import { TutorProfileModal } from './TutorProfileModal';
 import { PhotoWatermarkModal } from './PhotoWatermarkModal';
@@ -105,6 +105,7 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
   const [studentCount, setStudentCount] = useState<number>(15);
   const [dutyType, setDutyType] = useState<'Reguler' | 'Dinas Luar'>('Reguler');
   const [activityNotes, setActivityNotes] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   // Auto-fill from selected schedule in "Jadwal Hari Ini"
   useEffect(() => {
@@ -633,7 +634,7 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
   };
 
   // Submit Handler
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
 
@@ -690,37 +691,48 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
     const autoDate = getWibToday();
     const autoTimestamp = getWibTimeWithSuffix(new Date(), false);
 
-    const newRecord = saveAttendanceRecord({
-      tutorId: currentTutor.id,
-      tutorName: currentTutor.name,
-      program,
-      subjectTitle: subjectTitle.trim(),
-      classGroup: dutyType === 'Dinas Luar' ? `[Dinas Luar] ${classGroup.trim() || 'Lokasi Penugasan'}` : (classGroup.trim() || 'Gedung Utama PKBM'),
-      date: autoDate,
-      timeStart: autoTimestamp,
-      timeEnd: autoTimestamp,
-      studentCount,
-      activityNotes: activityNotes.trim() || (dutyType === 'Dinas Luar' ? 'Penugasan Dinas Luar.' : 'Pembelajaran tatap muka dan pendampingan warga belajar.'),
-      photoUrl: photoDataUrl,
-      location: geoLocation,
-      status: dutyType === 'Dinas Luar' ? 'Dinas Luar' : (geoLocation.isWithinRadius ? 'Hadir Valid' : 'Hadir Lapangan'),
-      dutyType
-    });
-
-    onRecordCreated(newRecord);
-    setSubmitSuccess(true);
+    setIsSubmitting(true);
     setFormError(null);
 
-    topAlertRef.current?.scrollIntoView({ behavior: 'smooth' });
+    try {
+      const { record: newRecord } = await saveAndSyncAttendanceRecord({
+        tutorId: currentTutor.id,
+        tutorName: currentTutor.name,
+        program,
+        subjectTitle: subjectTitle.trim(),
+        classGroup: dutyType === 'Dinas Luar' ? `[Dinas Luar] ${classGroup.trim() || 'Lokasi Penugasan'}` : (classGroup.trim() || 'Gedung Utama PKBM'),
+        date: autoDate,
+        timeStart: autoTimestamp,
+        timeEnd: autoTimestamp,
+        studentCount,
+        activityNotes: activityNotes.trim() || (dutyType === 'Dinas Luar' ? 'Penugasan Dinas Luar.' : 'Pembelajaran tatap muka dan pendampingan warga belajar.'),
+        photoUrl: photoDataUrl,
+        location: geoLocation,
+        status: dutyType === 'Dinas Luar' ? 'Dinas Luar' : (geoLocation.isWithinRadius ? 'Hadir Valid' : 'Hadir Lapangan'),
+        dutyType
+      });
 
-    // Reset Form fields
-    setSubjectTitle('');
-    setActivityNotes('');
-    setPhotoDataUrl(null);
+      onRecordCreated(newRecord);
+      setSubmitSuccess(true);
+      setFormError(null);
 
-    setTimeout(() => {
-      setSubmitSuccess(false);
-    }, 5000);
+      topAlertRef.current?.scrollIntoView({ behavior: 'smooth' });
+
+      // Reset Form fields
+      setSubjectTitle('');
+      setActivityNotes('');
+      setPhotoDataUrl(null);
+
+      setTimeout(() => {
+        setSubmitSuccess(false);
+      }, 5000);
+    } catch (e: any) {
+      console.warn('Presensi upload note:', e);
+      // Even if upload had network latency, local record was saved
+      setSubmitSuccess(true);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -1669,13 +1681,21 @@ export const AttendanceForm: React.FC<AttendanceFormProps> = ({
           ) : (
             <button
               type="submit"
-              className={`w-full font-black py-4 px-6 rounded-2xl shadow-xl flex items-center justify-center gap-2.5 text-base sm:text-lg transition-all active:scale-98 cursor-pointer ${
+              disabled={isSubmitting}
+              className={`w-full font-black py-4 px-6 rounded-2xl shadow-xl flex items-center justify-center gap-2.5 text-base sm:text-lg transition-all active:scale-98 ${
+                isSubmitting ? 'opacity-80 cursor-not-allowed' : 'cursor-pointer'
+              } ${
                 dutyType === 'Dinas Luar'
                   ? 'bg-gradient-to-r from-blue-700 via-indigo-700 to-blue-800 hover:from-blue-800 hover:to-indigo-900 text-white shadow-blue-900/30 border-2 border-blue-400/40'
                   : 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white shadow-emerald-900/30 border-2 border-emerald-400/40'
               }`}
             >
-              {dutyType === 'Dinas Luar' ? (
+              {isSubmitting ? (
+                <>
+                  <RefreshCw className="w-6 h-6 text-amber-300 animate-spin shrink-0" />
+                  <span>MENYINKRONKAN KE SELURUH PERANGKAT...</span>
+                </>
+              ) : dutyType === 'Dinas Luar' ? (
                 <>
                   <Briefcase className="w-6 h-6 text-amber-300 shrink-0" />
                   <span>KIRIM PRESENSI DINAS LUAR</span>

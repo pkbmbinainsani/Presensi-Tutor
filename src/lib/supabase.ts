@@ -378,6 +378,7 @@ export async function upsertTutorOnline(tutor: Tutor): Promise<boolean> {
       return false;
     }
     missingTablesSet.delete('tutors');
+    broadcastSupabaseSignal('master_data_updated', { type: 'tutors' }).catch(() => {});
     return true;
   } catch (e) {
     handleTableError('upsert tutor exception', 'tutors', e);
@@ -393,6 +394,7 @@ export async function deleteTutorOnline(id: string): Promise<boolean> {
       return false;
     }
     missingTablesSet.delete('tutors');
+    broadcastSupabaseSignal('master_data_updated', { type: 'tutors' }).catch(() => {});
     return true;
   } catch (e) {
     handleTableError('delete tutor exception', 'tutors', e);
@@ -429,6 +431,7 @@ export async function upsertLocationOnline(loc: ClassLocation): Promise<boolean>
       return false;
     }
     missingTablesSet.delete('class_locations');
+    broadcastSupabaseSignal('master_data_updated', { type: 'class_locations' }).catch(() => {});
     return true;
   } catch (e) {
     handleTableError('upsert location exception', 'class_locations', e);
@@ -444,6 +447,7 @@ export async function deleteLocationOnline(id: string): Promise<boolean> {
       return false;
     }
     missingTablesSet.delete('class_locations');
+    broadcastSupabaseSignal('master_data_updated', { type: 'class_locations' }).catch(() => {});
     return true;
   } catch (e) {
     handleTableError('delete location exception', 'class_locations', e);
@@ -711,6 +715,7 @@ export async function saveAllSchedulesOnline(schedules: ScheduleItem[], replace:
     }
 
     missingTablesSet.delete('schedules');
+    broadcastSupabaseSignal('schedules_updated', { count: schedules.length }).catch(() => {});
     return true;
   } catch (e) {
     handleTableError('save all schedules exception', 'schedules', e);
@@ -771,6 +776,7 @@ export async function deleteScheduleOnline(
     }
 
     missingTablesSet.delete('schedules');
+    broadcastSupabaseSignal('schedules_updated', { deletedId: id }).catch(() => {});
     return true;
   } catch (e) {
     handleTableError('delete schedule exception', 'schedules', e);
@@ -791,6 +797,7 @@ export async function clearAllSchedulesOnline(): Promise<boolean> {
       return false;
     }
     missingTablesSet.delete('schedules');
+    broadcastSupabaseSignal('schedules_updated', { cleared: true }).catch(() => {});
     return true;
   } catch (e) {
     handleTableError('clear all schedules exception', 'schedules', e);
@@ -799,7 +806,7 @@ export async function clearAllSchedulesOnline(): Promise<boolean> {
 }
 
 // -------------------------------------------------------------
-// Realtime Changes Listener
+// Realtime Changes & Cross-Device Broadcast Hub
 // -------------------------------------------------------------
 export type RealtimeSyncStatus = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR' | 'CONNECTING';
 
@@ -810,14 +817,86 @@ export interface SupabaseRealtimeEvent {
   oldRecord?: any;
 }
 
+let activeRealtimeChannel: any = null;
+
+/**
+ * Direct real-time broadcast across all online devices (~50ms latency)
+ * Delivers instant synchronization without relying solely on Postgres replication lag.
+ */
+export async function broadcastSupabaseSignal(event: string, payload: any): Promise<boolean> {
+  try {
+    if (!activeRealtimeChannel) {
+      activeRealtimeChannel = supabase.channel('pkbm-realtime-sync', {
+        config: { broadcast: { self: false } },
+      });
+      activeRealtimeChannel.subscribe();
+    }
+    const res = await activeRealtimeChannel.send({
+      type: 'broadcast',
+      event,
+      payload,
+    });
+    return res === 'ok';
+  } catch (e) {
+    console.warn('broadcastSupabaseSignal note:', e);
+    return false;
+  }
+}
+
 export function subscribeToSupabaseChanges(
   onChange: (table: string, eventInfo?: SupabaseRealtimeEvent) => void,
   onStatusChange?: (status: RealtimeSyncStatus) => void
 ): () => void {
   try {
     onStatusChange?.('CONNECTING');
-    const channel = supabase
-      .channel('pkbm-realtime-sync')
+
+    if (activeRealtimeChannel) {
+      try {
+        supabase.removeChannel(activeRealtimeChannel);
+      } catch (e) {}
+    }
+
+    const channel = supabase.channel('pkbm-realtime-sync', {
+      config: { broadcast: { self: false } },
+    });
+    activeRealtimeChannel = channel;
+
+    // 1. Peer-to-Peer Realtime Broadcast Events (Direct across devices in ~50ms)
+    channel
+      .on('broadcast', { event: 'attendance_created' }, ({ payload }: any) => {
+        console.log('⚡ [Realtime Broadcast] attendance_created received:', payload?.id);
+        onChange('attendance_records', {
+          table: 'attendance_records',
+          eventType: 'INSERT',
+          newRecord: payload,
+        });
+      })
+      .on('broadcast', { event: 'attendance_deleted' }, ({ payload }: any) => {
+        console.log('⚡ [Realtime Broadcast] attendance_deleted received:', payload?.id);
+        onChange('attendance_records', {
+          table: 'attendance_records',
+          eventType: 'DELETE',
+          oldRecord: { id: payload?.id },
+        });
+      })
+      .on('broadcast', { event: 'schedules_updated' }, ({ payload }: any) => {
+        console.log('⚡ [Realtime Broadcast] schedules_updated received');
+        onChange('schedules', {
+          table: 'schedules',
+          eventType: 'UPDATE',
+          newRecord: payload,
+        });
+      })
+      .on('broadcast', { event: 'master_data_updated' }, ({ payload }: any) => {
+        console.log('⚡ [Realtime Broadcast] master_data_updated received:', payload?.type);
+        onChange(payload?.type || 'tutors', {
+          table: payload?.type || 'tutors',
+          eventType: 'UPDATE',
+        });
+      });
+
+    // 2. PostgreSQL CDC Database Replication Listeners
+    channel
       .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_records' }, (payload: any) => {
         let transformedNew: AttendanceRecord | undefined = undefined;
         if (payload.new && typeof payload.new === 'object') {
@@ -845,13 +924,25 @@ export function subscribeToSupabaseChanges(
         } else {
           console.log('Skipping realtime reload for schedules because local mutation is in progress');
         }
-      })
-      .subscribe((status) => {
-        onStatusChange?.(status as RealtimeSyncStatus);
       });
+
+    channel.subscribe((status) => {
+      onStatusChange?.(status as RealtimeSyncStatus);
+      if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.warn(`[Realtime Hub] Saluran terputus (${status}). Mencoba menghubungkan ulang dalam 3 detik...`);
+        setTimeout(() => {
+          try {
+            channel.subscribe();
+          } catch (e) {}
+        }, 3000);
+      }
+    });
 
     return () => {
       supabase.removeChannel(channel);
+      if (activeRealtimeChannel === channel) {
+        activeRealtimeChannel = null;
+      }
     };
   } catch (err) {
     console.warn('Realtime subscription error:', err);

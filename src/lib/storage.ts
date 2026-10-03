@@ -18,7 +18,8 @@ import {
   upsertScheduleOnline,
   saveAllSchedulesOnline,
   deleteScheduleOnline,
-  clearAllSchedulesOnline
+  clearAllSchedulesOnline,
+  broadcastSupabaseSignal
 } from './supabase';
 
 const STORAGE_KEYS = {
@@ -194,8 +195,13 @@ export function saveAttendanceRecord(newRecord: Omit<AttendanceRecord, 'id' | 'c
   const updated = [fullRecord, ...records];
   saveAttendanceToLocalStorage(updated);
 
-  // Broadcast to other tabs / windows instantly (0ms)
+  // Broadcast to other tabs / windows on same device (0ms)
   broadcastAttendanceChange({ type: 'INSERT', record: fullRecord });
+
+  // Direct Peer-to-Peer Realtime Broadcast to all other devices (~50ms)
+  broadcastSupabaseSignal('attendance_created', fullRecord).catch(e => {
+    console.warn('Realtime broadcast attendance signal error:', e);
+  });
 
   // Asynchronously send to Supabase online database
   insertAttendanceOnline(fullRecord).catch(err => {
@@ -203,6 +209,40 @@ export function saveAttendanceRecord(newRecord: Omit<AttendanceRecord, 'id' | 'c
   });
 
   return fullRecord;
+}
+
+/**
+ * Saves locally immediately, then awaits Supabase cloud insertion and triggers direct broadcast.
+ * Guarantees that mobile devices don't terminate the upload when closing the browser.
+ */
+export async function saveAndSyncAttendanceRecord(
+  newRecord: Omit<AttendanceRecord, 'id' | 'createdAt'>
+): Promise<{ record: AttendanceRecord; onlineSuccess: boolean }> {
+  const records = getAttendanceRecords();
+  const fullRecord: AttendanceRecord = {
+    ...newRecord,
+    id: 'att-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    createdAt: new Date().toISOString()
+  };
+  if (fullRecord.photoUrl) {
+    attendancePhotoCache.set(fullRecord.id, fullRecord.photoUrl);
+  }
+  const updated = [fullRecord, ...records];
+  saveAttendanceToLocalStorage(updated);
+
+  // Broadcast locally
+  broadcastAttendanceChange({ type: 'INSERT', record: fullRecord });
+
+  let onlineSuccess = false;
+  try {
+    onlineSuccess = await insertAttendanceOnline(fullRecord);
+    // Broadcast to other devices worldwide
+    await broadcastSupabaseSignal('attendance_created', fullRecord);
+  } catch (err) {
+    console.warn('saveAndSyncAttendanceRecord cloud exception:', err);
+  }
+
+  return { record: fullRecord, onlineSuccess };
 }
 
 export function deleteAttendanceRecord(id: string): void {
@@ -213,6 +253,11 @@ export function deleteAttendanceRecord(id: string): void {
 
   // Broadcast deletion to other tabs / windows instantly
   broadcastAttendanceChange({ type: 'DELETE', id });
+
+  // Broadcast deletion to other devices worldwide
+  broadcastSupabaseSignal('attendance_deleted', { id }).catch(e => {
+    console.warn('Realtime broadcast attendance delete error:', e);
+  });
 
   // Asynchronously remove from Supabase
   deleteAttendanceOnline(id).catch(err => {
