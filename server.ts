@@ -1,10 +1,12 @@
 import express from 'express';
+import http from 'http';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 
 async function startServer() {
   const app = express();
+  const httpServer = http.createServer(app);
   const PORT = 3000;
 
   app.use(express.json({ limit: '15mb' }));
@@ -106,8 +108,12 @@ Berikan 4 tips praktis interaktif, metode andragogi, dan teknik es ice-breaking 
 
   // Vite middleware setup
   if (process.env.NODE_ENV !== 'production') {
+    const isHmrDisabled = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { 
+        middlewareMode: true,
+        hmr: isHmrDisabled ? false : { server: httpServer },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -119,7 +125,7 @@ Berikan 4 tips praktis interaktif, metode andragogi, dan teknik es ice-breaking 
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Server Absensi PKBM running on http://localhost:${PORT}`);
   });
 }
