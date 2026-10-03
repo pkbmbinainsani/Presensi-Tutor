@@ -48,6 +48,73 @@ try {
 // In-memory cache for base64 photos to prevent localStorage quota exhaustion (5MB limit)
 const attendancePhotoCache = new Map<string, string>();
 
+// -------------------------------------------------------------------
+// Cross-Tab & Cross-Window Instant Realtime Broadcast Channel
+// -------------------------------------------------------------------
+export type AttendanceBroadcastMsg = 
+  | { type: 'INSERT'; record: AttendanceRecord }
+  | { type: 'DELETE'; id: string }
+  | { type: 'RELOAD' };
+
+let attendanceBroadcastChannel: BroadcastChannel | null = null;
+try {
+  if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+    attendanceBroadcastChannel = new BroadcastChannel('pkbm_attendance_realtime_broadcast');
+  }
+} catch (e) {
+  // Ignore
+}
+
+export function subscribeToAttendanceBroadcast(
+  onMessage: (msg: AttendanceBroadcastMsg) => void
+): () => void {
+  if (!attendanceBroadcastChannel) return () => {};
+  const handler = (evt: MessageEvent<AttendanceBroadcastMsg>) => {
+    if (evt.data) onMessage(evt.data);
+  };
+  attendanceBroadcastChannel.addEventListener('message', handler);
+  return () => {
+    attendanceBroadcastChannel?.removeEventListener('message', handler);
+  };
+}
+
+export function broadcastAttendanceChange(msg: AttendanceBroadcastMsg): void {
+  try {
+    attendanceBroadcastChannel?.postMessage(msg);
+  } catch (e) {
+    // Ignore
+  }
+}
+
+/**
+ * Dedicated rapid attendance synchronization with Supabase.
+ * Updates local cache and hydrates photos without needing to fetch other tables.
+ */
+export async function syncAttendanceWithSupabase(): Promise<{
+  records: AttendanceRecord[];
+  hasChanges: boolean;
+}> {
+  try {
+    const onlineAtt = await fetchAttendanceOnline();
+    if (onlineAtt !== null) {
+      onlineAtt.forEach(r => {
+        if (r.id && r.photoUrl) {
+          attendancePhotoCache.set(r.id, r.photoUrl);
+        }
+      });
+      const local = getAttendanceRecords();
+      const hasChanges = local.length !== onlineAtt.length || 
+        (local.length > 0 && onlineAtt.length > 0 && local[0].id !== onlineAtt[0].id);
+      
+      saveAttendanceToLocalStorage(onlineAtt);
+      return { records: onlineAtt, hasChanges };
+    }
+  } catch (err) {
+    console.warn('syncAttendanceWithSupabase note:', err);
+  }
+  return { records: getAttendanceRecords(), hasChanges: false };
+}
+
 /**
  * Safely saves attendance records to localStorage.
  * If the payload exceeds the browser's 5MB localStorage quota (due to base64 images),
@@ -127,6 +194,9 @@ export function saveAttendanceRecord(newRecord: Omit<AttendanceRecord, 'id' | 'c
   const updated = [fullRecord, ...records];
   saveAttendanceToLocalStorage(updated);
 
+  // Broadcast to other tabs / windows instantly (0ms)
+  broadcastAttendanceChange({ type: 'INSERT', record: fullRecord });
+
   // Asynchronously send to Supabase online database
   insertAttendanceOnline(fullRecord).catch(err => {
     console.warn('Background Supabase insert attendance note:', err);
@@ -140,6 +210,9 @@ export function deleteAttendanceRecord(id: string): void {
   const records = getAttendanceRecords();
   const updated = records.filter(r => r.id !== id);
   saveAttendanceToLocalStorage(updated);
+
+  // Broadcast deletion to other tabs / windows instantly
+  broadcastAttendanceChange({ type: 'DELETE', id });
 
   // Asynchronously remove from Supabase
   deleteAttendanceOnline(id).catch(err => {
@@ -616,11 +689,17 @@ export async function syncAllWithSupabase(): Promise<{
     let usedOnline = false;
 
     if (onlineTutors !== null) {
-      loadedTutors = onlineTutors;
-      try {
-        localStorage.setItem(STORAGE_KEYS.TUTORS, JSON.stringify(onlineTutors));
-      } catch (err) {
-        console.warn('Could not cache tutors to localStorage:', err);
+      if (onlineTutors.length > 0) {
+        loadedTutors = onlineTutors;
+        try {
+          localStorage.setItem(STORAGE_KEYS.TUTORS, JSON.stringify(onlineTutors));
+        } catch (err) {
+          console.warn('Could not cache tutors to localStorage:', err);
+        }
+      } else if (loadedTutors.length > 0) {
+        for (const t of loadedTutors) {
+          upsertTutorOnline(t).catch(e => console.warn('Auto-seed tutor note:', e));
+        }
       }
       usedOnline = true;
     }
@@ -633,8 +712,12 @@ export async function syncAllWithSupabase(): Promise<{
         } catch (err) {
           console.warn('Could not cache locations to localStorage:', err);
         }
-        usedOnline = true;
+      } else if (loadedLocs.length > 0) {
+        for (const loc of loadedLocs) {
+          upsertLocationOnline(loc).catch(e => console.warn('Auto-seed location note:', e));
+        }
       }
+      usedOnline = true;
     }
 
     if (onlineAtt !== null) {
@@ -679,30 +762,36 @@ export async function syncAllWithSupabase(): Promise<{
         localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify([]));
         localStorage.setItem(STORAGE_KEYS.SCHEDULES_INITIALIZED, 'true');
       } else {
-        // Singkirkan jadwal yang sudah dihapus oleh pengguna (tombstone)
-        const deadIds: string[] = [];
-        const aliveOnline = onlineSchedules.filter(item => {
-          if (isScheduleDeletedTombstone(item)) {
-            deadIds.push(item.id);
-            return false;
-          }
-          return true;
-        });
+        if (onlineSchedules.length > 0) {
+          // Singkirkan jadwal yang sudah dihapus oleh pengguna (tombstone)
+          const deadIds: string[] = [];
+          const aliveOnline = onlineSchedules.filter(item => {
+            if (isScheduleDeletedTombstone(item)) {
+              deadIds.push(item.id);
+              return false;
+            }
+            return true;
+          });
 
-        // Hapus sisa record di Supabase secara asinkron agar database bersih
-        if (deadIds.length > 0) {
-          for (const deadId of deadIds) {
-            deleteScheduleOnline(deadId).catch(err => console.warn('Auto-clean tombstoned online schedule:', err));
+          // Hapus sisa record di Supabase secara asinkron agar database bersih
+          if (deadIds.length > 0) {
+            for (const deadId of deadIds) {
+              deleteScheduleOnline(deadId).catch(err => console.warn('Auto-clean tombstoned online schedule:', err));
+            }
           }
-        }
 
-        const deduplicated = deduplicateSchedules(aliveOnline);
-        loadedSchedules = deduplicated;
-        try {
-          localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(deduplicated));
-          localStorage.setItem(STORAGE_KEYS.SCHEDULES_INITIALIZED, 'true');
-        } catch (err) {
-          console.warn('Could not cache schedules to localStorage:', err);
+          const deduplicated = deduplicateSchedules(aliveOnline);
+          loadedSchedules = deduplicated;
+          try {
+            localStorage.setItem(STORAGE_KEYS.SCHEDULES, JSON.stringify(deduplicated));
+            localStorage.setItem(STORAGE_KEYS.SCHEDULES_INITIALIZED, 'true');
+          } catch (err) {
+            console.warn('Could not cache schedules to localStorage:', err);
+          }
+        } else if (loadedSchedules.length > 0) {
+          saveAllSchedulesOnline(loadedSchedules, true).catch(err => {
+            console.warn('Auto-seed local schedules note:', err);
+          });
         }
       }
       usedOnline = true;

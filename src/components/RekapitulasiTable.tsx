@@ -21,19 +21,30 @@ import {
 import { AttendanceRecord, FilterState, ProgramType } from '../types';
 import { PhotoWatermarkModal } from './PhotoWatermarkModal';
 import { getWibToday, getWibPresetRange, formatWibDateIndo, formatTimeWibDisplay } from '../lib/dateUtils';
+import { RealtimeSyncStatus } from '../lib/supabase';
 
 interface RekapitulasiTableProps {
   records: AttendanceRecord[];
   onDeleteRecord: (id: string) => void;
-  onRefreshOnline?: () => Promise<void> | void;
+  onRefreshOnline?: () => Promise<any> | void;
   isSyncing?: boolean;
+  realtimeStatus?: RealtimeSyncStatus;
+  lastSyncedAt?: string;
+  onForceSyncAttendance?: () => Promise<void> | void;
+  newAttendanceAlert?: { record: AttendanceRecord; timestamp: number } | null;
+  onDismissAlert?: () => void;
 }
 
 export const RekapitulasiTable: React.FC<RekapitulasiTableProps> = ({
   records,
   onDeleteRecord,
   onRefreshOnline,
-  isSyncing = false
+  isSyncing = false,
+  realtimeStatus = 'SUBSCRIBED',
+  lastSyncedAt,
+  onForceSyncAttendance,
+  newAttendanceAlert,
+  onDismissAlert
 }) => {
   const thisMonthRange = useMemo(() => getWibPresetRange('thisMonth'), []);
   const todayStr = useMemo(() => getWibToday(), []);
@@ -208,8 +219,117 @@ export const RekapitulasiTable: React.FC<RekapitulasiTableProps> = ({
     document.body.removeChild(link);
   };
 
+  // Play subtle chime when a new attendance record arrives
+  React.useEffect(() => {
+    if (newAttendanceAlert) {
+      try {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContextClass) {
+          const ctx = new AudioContextClass();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(659.25, ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.12);
+          gain.gain.setValueAtTime(0.1, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.3);
+        }
+      } catch (e) {
+        // Audio error or autoplay policy
+      }
+    }
+  }, [newAttendanceAlert?.timestamp]);
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      
+      {/* Realtime Live Sync Bar (Anti-Selisih Kehadiran) */}
+      <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-emerald-950 text-white p-3.5 sm:p-4 rounded-2xl border border-slate-800 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="relative flex h-3.5 w-3.5 shrink-0">
+            {realtimeStatus === 'SUBSCRIBED' ? (
+              <>
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500 shadow-sm shadow-emerald-400"></span>
+              </>
+            ) : realtimeStatus === 'CONNECTING' ? (
+              <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-amber-400 animate-pulse"></span>
+            ) : (
+              <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-rose-500"></span>
+            )}
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs sm:text-sm font-black tracking-tight text-white flex items-center gap-1.5">
+                {realtimeStatus === 'SUBSCRIBED' ? 'Sinkronisasi Realtime Aktif' : 'Menyambung Saluran Realtime...'}
+              </span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-900/80 text-emerald-300 border border-emerald-700/60">
+                Anti-Selisih Kehadiran
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-300 mt-0.5">
+              Presensi tutor langsung masuk seketika via WebSocket &amp; otomatis dicek berkala setiap 15 detik.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5 self-end md:self-auto shrink-0">
+          <div className="text-right hidden sm:block">
+            <span className="text-[10px] text-slate-400 block font-mono">Pemeriksaan Terakhir:</span>
+            <span className="text-xs font-bold text-emerald-400 font-mono">{lastSyncedAt || 'Barusan'} WIB</span>
+          </div>
+
+          <button
+            type="button"
+            disabled={isSyncing}
+            onClick={() => {
+              if (onForceSyncAttendance) {
+                onForceSyncAttendance();
+              } else if (onRefreshOnline) {
+                onRefreshOnline();
+              }
+            }}
+            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:bg-slate-700 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+            title="Periksa data presensi terbaru dari server sekarang"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+            <span>{isSyncing ? 'Menyelaraskan...' : 'Periksa Sekarang'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Realtime Alert Banner When New Record Arrives */}
+      {newAttendanceAlert && (
+        <div className="bg-emerald-600 text-white p-3.5 rounded-2xl shadow-lg border border-emerald-400 flex items-center justify-between gap-3 animate-in slide-in-from-top-3 fade-in duration-300">
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 bg-white/20 rounded-lg shrink-0">
+              <CheckCircle2 className="w-5 h-5 text-white" />
+            </div>
+            <div className="text-xs leading-tight">
+              <div className="flex items-center gap-2">
+                <span className="font-black text-xs sm:text-sm uppercase tracking-wide">⚡ Presensi Baru Diterima Real-Time!</span>
+                <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded font-mono font-bold">{newAttendanceAlert.record.timeStart}</span>
+              </div>
+              <p className="mt-1 font-medium text-white/95 text-xs">
+                <strong>{newAttendanceAlert.record.tutorName}</strong> baru saja mengirim presensi <strong>{newAttendanceAlert.record.subjectTitle}</strong> ({newAttendanceAlert.record.classGroup || newAttendanceAlert.record.program}).
+              </p>
+            </div>
+          </div>
+          {onDismissAlert && (
+            <button
+              type="button"
+              onClick={onDismissAlert}
+              className="text-white/80 hover:text-white text-xs px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 font-bold transition shrink-0"
+            >
+              Tutup
+            </button>
+          )}
+        </div>
+      )}
       
       {/* KPI Cards Header */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -520,43 +640,59 @@ export const RekapitulasiTable: React.FC<RekapitulasiTableProps> = ({
                   </td>
                 </tr>
               ) : (
-                filteredRecords.map((r) => (
-                  <tr key={r.id} className="hover:bg-emerald-50/40 transition-colors">
-                    
-                    {/* Waktu & Foto Thumbnail */}
-                    <td className="py-3.5 px-4">
-                      <div className="flex items-center gap-3">
-                        {r.photoUrl ? (
-                          <img
-                            src={r.photoUrl}
-                            alt={r.subjectTitle}
-                            className="w-12 h-12 rounded-xl object-cover border border-slate-300 shadow-sm shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
-                            onClick={() => setSelectedRecordForModal(r)}
-                          />
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setSelectedRecordForModal(r)}
-                            className="w-12 h-12 rounded-xl bg-slate-100 hover:bg-emerald-50 border border-slate-300 flex flex-col items-center justify-center text-slate-400 hover:text-emerald-600 shrink-0 transition-colors"
-                            title="Buka Foto / Dokumentasi"
-                          >
-                            <Camera className="w-5 h-5" />
-                          </button>
-                        )}
-                        <div>
-                          <p className="font-bold text-slate-900">{formatWibDateIndo(r.date, 'short')}</p>
-                          <p className="text-[11px] text-slate-500 flex items-center gap-1 font-mono">
-                            <Clock className="w-3 h-3 text-emerald-600" />
-                            {formatTimeWibDisplay(r.timeStart)}
-                          </p>
+                filteredRecords.map((r) => {
+                  const isNewlyArrived = r.id === newAttendanceAlert?.record.id;
+                  return (
+                    <tr 
+                      key={r.id} 
+                      className={`transition-colors duration-500 ${
+                        isNewlyArrived 
+                          ? 'bg-emerald-100/90 ring-2 ring-emerald-400 font-medium' 
+                          : 'hover:bg-emerald-50/40'
+                      }`}
+                    >
+                      
+                      {/* Waktu & Foto Thumbnail */}
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-3">
+                          {r.photoUrl ? (
+                            <img
+                              src={r.photoUrl}
+                              alt={r.subjectTitle}
+                              className="w-12 h-12 rounded-xl object-cover border border-slate-300 shadow-sm shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+                              onClick={() => setSelectedRecordForModal(r)}
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedRecordForModal(r)}
+                              className="w-12 h-12 rounded-xl bg-slate-100 hover:bg-emerald-50 border border-slate-300 flex flex-col items-center justify-center text-slate-400 hover:text-emerald-600 shrink-0 transition-colors"
+                              title="Buka Foto / Dokumentasi"
+                            >
+                              <Camera className="w-5 h-5" />
+                            </button>
+                          )}
+                          <div>
+                            <p className="font-bold text-slate-900">{formatWibDateIndo(r.date, 'short')}</p>
+                            <p className="text-[11px] text-slate-500 flex items-center gap-1 font-mono">
+                              <Clock className="w-3 h-3 text-emerald-600" />
+                              {formatTimeWibDisplay(r.timeStart)}
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                    </td>
+                      </td>
 
-                    {/* Nama Tutor */}
-                    <td className="py-3.5 px-4 font-bold text-slate-900">
-                      {r.tutorName}
-                    </td>
+                      {/* Nama Tutor */}
+                      <td className="py-3.5 px-4 font-bold text-slate-900">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span>{r.tutorName}</span>
+                          {isNewlyArrived && (
+                            <span className="px-1.5 py-0.5 bg-emerald-600 text-white text-[9px] font-black rounded-md uppercase tracking-wider animate-bounce shadow-xs">
+                              BARU
+                            </span>
+                          )}
+                        </div>
+                      </td>
 
                     {/* Program & Matpel */}
                     <td className="py-3.5 px-4">
@@ -621,7 +757,8 @@ export const RekapitulasiTable: React.FC<RekapitulasiTableProps> = ({
                     </td>
 
                   </tr>
-                ))
+                );
+              })
               )}
             </tbody>
           </table>

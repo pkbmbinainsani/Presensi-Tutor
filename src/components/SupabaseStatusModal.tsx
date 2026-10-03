@@ -19,11 +19,18 @@ import {
   checkSupabaseHealth, 
   SupabaseHealthStatus 
 } from '../lib/supabase';
+import { 
+  getTutors, 
+  getClassLocations, 
+  getSchedules, 
+  getAttendanceRecords, 
+  syncAllWithSupabase 
+} from '../lib/storage';
 
 interface SupabaseStatusModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSyncNow?: () => void;
+  onSyncNow?: () => Promise<any> | void;
 }
 
 export const SupabaseStatusModal: React.FC<SupabaseStatusModalProps> = ({
@@ -33,6 +40,18 @@ export const SupabaseStatusModal: React.FC<SupabaseStatusModalProps> = ({
 }) => {
   const [health, setHealth] = useState<SupabaseHealthStatus | null>(null);
   const [isChecking, setIsChecking] = useState<boolean>(false);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncFeedback, setSyncFeedback] = useState<{
+    type: 'success' | 'error';
+    message: string;
+    details?: {
+      tutors: number;
+      locations: number;
+      schedules: number;
+      attendance: number;
+    };
+    time: string;
+  } | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
   const [selectedSqlTab, setSelectedSqlTab] = useState<'schedules' | 'all'>('schedules');
 
@@ -52,9 +71,51 @@ export const SupabaseStatusModal: React.FC<SupabaseStatusModalProps> = ({
     }
   };
 
+  const handleExecuteSync = async () => {
+    setIsSyncing(true);
+    setSyncFeedback(null);
+    try {
+      if (onSyncNow) {
+        await onSyncNow();
+      } else {
+        await syncAllWithSupabase();
+      }
+      
+      const updatedHealth = await checkSupabaseHealth();
+      setHealth(updatedHealth);
+
+      const countTutors = getTutors().length;
+      const countLocs = getClassLocations().length;
+      const countSchedules = getSchedules().length;
+      const countAtt = getAttendanceRecords().length;
+
+      setSyncFeedback({
+        type: 'success',
+        message: 'Sinkronisasi berhasil! Seluruh data lokal dan database Supabase telah diselaraskan secara aman.',
+        details: {
+          tutors: countTutors,
+          locations: countLocs,
+          schedules: countSchedules,
+          attendance: countAtt,
+        },
+        time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      });
+    } catch (err: any) {
+      console.warn('Sync failed in modal:', err);
+      setSyncFeedback({
+        type: 'error',
+        message: `Sinkronisasi terhambat: ${err?.message || 'Gagal berkomunikasi dengan database'}. Data lokal Anda tetap aman.`,
+        time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   useEffect(() => {
     if (isOpen) {
       runHealthCheck();
+      setSyncFeedback(null);
     }
   }, [isOpen]);
 
@@ -458,22 +519,91 @@ DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.schedules; EXCE
             </div>
           )}
 
-          {/* Sync Button */}
-          {onSyncNow && (
-            <div className="pt-2 border-t border-slate-200 flex justify-end">
+          {/* Sync Section & Interactive Button */}
+          <div className="pt-3 border-t border-slate-200 flex flex-col gap-3">
+            {/* Live syncing banner */}
+            {isSyncing && (
+              <div className="p-3 bg-blue-50 border border-blue-200 text-blue-900 rounded-2xl flex items-center gap-3 animate-pulse">
+                <RefreshCw className="w-5 h-5 text-blue-600 animate-spin shrink-0" />
+                <div className="text-xs">
+                  <p className="font-extrabold text-blue-950">Sedang Menyinkronkan Data...</p>
+                  <p className="text-[11px] text-blue-800">Menghubungkan ke Supabase &amp; menyelaraskan data Tutor, Lokasi, Presensi, dan Jadwal KBM.</p>
+                </div>
+              </div>
+            )}
+
+            {/* Sync Feedback Result */}
+            {syncFeedback && !isSyncing && (
+              <div className={`p-4 rounded-2xl border text-xs animate-in fade-in slide-in-from-bottom-2 duration-300 ${
+                syncFeedback.type === 'success' 
+                  ? 'bg-emerald-50/90 border-emerald-300 text-emerald-950' 
+                  : 'bg-rose-50 border-rose-300 text-rose-950'
+              }`}>
+                <div className="flex items-start gap-2.5">
+                  {syncFeedback.type === 'success' ? (
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                  )}
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-extrabold text-xs sm:text-sm">
+                        {syncFeedback.type === 'success' ? 'Sinkronisasi Berhasil Selesai' : 'Perhatian Sinkronisasi'}
+                      </span>
+                      <span className="text-[10px] opacity-80 font-mono bg-white/70 px-2 py-0.5 rounded-full border border-emerald-200">
+                        {syncFeedback.time} WIB
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] sm:text-xs leading-relaxed text-slate-700">
+                      {syncFeedback.message}
+                    </p>
+                    
+                    {syncFeedback.details && (
+                      <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2.5 border-t border-emerald-200/70 text-[11px]">
+                        <div className="bg-white/90 p-2 rounded-xl border border-emerald-200/50 flex flex-col shadow-xs">
+                          <span className="text-slate-500 text-[10px] font-medium">Tutor Terdaftar</span>
+                          <span className="font-extrabold text-slate-900 text-xs sm:text-sm">{syncFeedback.details.tutors} orang</span>
+                        </div>
+                        <div className="bg-white/90 p-2 rounded-xl border border-emerald-200/50 flex flex-col shadow-xs">
+                          <span className="text-slate-500 text-[10px] font-medium">Titik Lokasi KBM</span>
+                          <span className="font-extrabold text-slate-900 text-xs sm:text-sm">{syncFeedback.details.locations} titik</span>
+                        </div>
+                        <div className="bg-white/90 p-2 rounded-xl border border-emerald-200/50 flex flex-col shadow-xs">
+                          <span className="text-slate-500 text-[10px] font-medium">Jadwal Semester</span>
+                          <span className="font-extrabold text-slate-900 text-xs sm:text-sm">{syncFeedback.details.schedules} sesi</span>
+                        </div>
+                        <div className="bg-white/90 p-2 rounded-xl border border-emerald-200/50 flex flex-col shadow-xs">
+                          <span className="text-slate-500 text-[10px] font-medium">Log Presensi</span>
+                          <span className="font-extrabold text-slate-900 text-xs sm:text-sm">{syncFeedback.details.attendance} rekaman</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-50 p-3 rounded-2xl border border-slate-200">
+              <div className="text-[11px] text-slate-600">
+                <p className="font-semibold text-slate-800">Sinkronisasi Menyeluruh Dua Arah</p>
+                <p className="text-slate-500 text-[10px]">Menyinkronkan tutor, titik lokasi, jadwal KBM, dan presensi antara Supabase &amp; perangkat ini.</p>
+              </div>
+
               <button
                 type="button"
-                onClick={() => {
-                  onSyncNow();
-                  runHealthCheck();
-                }}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl flex items-center gap-2 transition"
+                disabled={isSyncing}
+                onClick={handleExecuteSync}
+                className={`w-full sm:w-auto px-4 py-2.5 font-bold rounded-xl flex items-center justify-center gap-2 text-xs sm:text-sm transition shadow-sm shrink-0 ${
+                  isSyncing
+                    ? 'bg-blue-400 text-white cursor-not-allowed'
+                    : 'bg-blue-600 hover:bg-blue-700 active:scale-95 text-white'
+                }`}
               >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Sinkronkan Ulang Semua Data Sekarang</span>
+                <RefreshCw className={`w-4 h-4 shrink-0 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>{isSyncing ? 'Sedang Menyinkronkan...' : 'Sinkronkan Ulang Semua Data Sekarang'}</span>
               </button>
             </div>
-          )}
+          </div>
 
         </div>
 

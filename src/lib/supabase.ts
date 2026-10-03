@@ -801,36 +801,61 @@ export async function clearAllSchedulesOnline(): Promise<boolean> {
 // -------------------------------------------------------------
 // Realtime Changes Listener
 // -------------------------------------------------------------
-export function subscribeToSupabaseChanges(onChange: (table: string) => void): () => void {
+export type RealtimeSyncStatus = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR' | 'CONNECTING';
+
+export interface SupabaseRealtimeEvent {
+  table: string;
+  eventType: 'INSERT' | 'UPDATE' | 'DELETE' | '*';
+  newRecord?: any;
+  oldRecord?: any;
+}
+
+export function subscribeToSupabaseChanges(
+  onChange: (table: string, eventInfo?: SupabaseRealtimeEvent) => void,
+  onStatusChange?: (status: RealtimeSyncStatus) => void
+): () => void {
   try {
+    onStatusChange?.('CONNECTING');
     const channel = supabase
       .channel('pkbm-realtime-sync')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_records' }, () => {
-        onChange('attendance_records');
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_records' }, (payload: any) => {
+        let transformedNew: AttendanceRecord | undefined = undefined;
+        if (payload.new && typeof payload.new === 'object') {
+          transformedNew = transformAttendanceFromDb(payload.new);
+        }
+        onChange('attendance_records', {
+          table: 'attendance_records',
+          eventType: payload.eventType || 'INSERT',
+          newRecord: transformedNew,
+          oldRecord: payload.old,
+        });
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tutors' }, () => {
-        onChange('tutors');
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tutors' }, (payload: any) => {
+        onChange('tutors', { table: 'tutors', eventType: payload.eventType, newRecord: payload.new, oldRecord: payload.old });
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'class_locations' }, () => {
-        onChange('class_locations');
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'class_locations' }, (payload: any) => {
+        onChange('class_locations', { table: 'class_locations', eventType: payload.eventType, newRecord: payload.new, oldRecord: payload.old });
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pkbm_info' }, () => {
-        onChange('pkbm_info');
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pkbm_info' }, (payload: any) => {
+        onChange('pkbm_info', { table: 'pkbm_info', eventType: payload.eventType, newRecord: payload.new, oldRecord: payload.old });
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, (payload: any) => {
         if (!isScheduleMutationInProgress()) {
-          onChange('schedules');
+          onChange('schedules', { table: 'schedules', eventType: payload.eventType, newRecord: payload.new, oldRecord: payload.old });
         } else {
           console.log('Skipping realtime reload for schedules because local mutation is in progress');
         }
       })
-      .subscribe();
+      .subscribe((status) => {
+        onStatusChange?.(status as RealtimeSyncStatus);
+      });
 
     return () => {
       supabase.removeChannel(channel);
     };
   } catch (err) {
     console.warn('Realtime subscription error:', err);
+    onStatusChange?.('CHANNEL_ERROR');
     return () => {};
   }
 }

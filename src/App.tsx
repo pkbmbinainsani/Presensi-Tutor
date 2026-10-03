@@ -23,13 +23,16 @@ import {
   saveClassLocations,
   getPKBMInfo,
   syncAllWithSupabase,
+  syncAttendanceWithSupabase,
+  subscribeToAttendanceBroadcast,
   getSchedules,
   saveSchedules
 } from './lib/storage';
 import { 
   subscribeToSupabaseChanges, 
   checkSupabaseHealth, 
-  SupabaseHealthStatus 
+  SupabaseHealthStatus,
+  RealtimeSyncStatus
 } from './lib/supabase';
 import { PKBM_CONFIG } from './data/mockData';
 import { getWibToday } from './lib/dateUtils';
@@ -56,10 +59,16 @@ export default function App() {
     updateDocumentFavicon(targetFavicon);
   }, [pkbmInfo.logoUrl, pkbmInfo.faviconUrl, pkbmInfo.useLogoAsFavicon]);
 
-  // Supabase Online Status & Modal
+  // Supabase Online Status & Realtime Sync States
   const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState<boolean>(false);
   const [supabaseHealth, setSupabaseHealth] = useState<SupabaseHealthStatus | null>(null);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [isFastSyncing, setIsFastSyncing] = useState<boolean>(false);
+  const [realtimeStatus, setRealtimeStatus] = useState<RealtimeSyncStatus>('CONNECTING');
+  const [lastAttendanceSyncedAt, setLastAttendanceSyncedAt] = useState<string>(() => 
+    new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  );
+  const [newAttendanceAlert, setNewAttendanceAlert] = useState<{ record: AttendanceRecord; timestamp: number } | null>(null);
 
   // Load Initial Data & Session, then Sync with Supabase Online
   const refreshLocalData = () => {
@@ -84,12 +93,41 @@ export default function App() {
       if (result.schedules) {
         setSchedules(result.schedules);
       }
+      setLastAttendanceSyncedAt(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      return result;
     } catch (err) {
       console.warn('Sync error:', err);
+      throw err;
     } finally {
       setIsSyncing(false);
     }
   };
+
+  // Rapid Attendance-only synchronization with Supabase (sub-second)
+  const handleSyncAttendanceOnly = async () => {
+    setIsFastSyncing(true);
+    try {
+      const res = await syncAttendanceWithSupabase();
+      if (res.hasChanges || res.records.length !== attendanceRecords.length) {
+        setAttendanceRecords(res.records);
+      }
+      setLastAttendanceSyncedAt(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    } catch (e) {
+      console.warn('Fast attendance sync note:', e);
+    } finally {
+      setIsFastSyncing(false);
+    }
+  };
+
+  // Auto-dismiss real-time incoming attendance alert after 8 seconds
+  useEffect(() => {
+    if (newAttendanceAlert) {
+      const timer = setTimeout(() => {
+        setNewAttendanceAlert(null);
+      }, 8000);
+      return () => clearTimeout(timer);
+    }
+  }, [newAttendanceAlert]);
 
   useEffect(() => {
     // 1. First load local clean cache
@@ -98,13 +136,63 @@ export default function App() {
     // 2. Fetch and synchronize with Supabase online
     handleSyncOnline();
 
-    // 3. Subscribe to real-time events from Supabase
-    const unsubscribe = subscribeToSupabaseChanges((table) => {
-      console.log(`Realtime update detected from Supabase on table: ${table}`);
-      handleSyncOnline();
+    // 3. Subscribe to real-time events from Supabase with instant payload injection
+    const unsubscribeSupabase = subscribeToSupabaseChanges(
+      (table, eventInfo) => {
+        if (table === 'attendance_records') {
+          if (eventInfo?.eventType === 'INSERT' && eventInfo.newRecord) {
+            const newRec = eventInfo.newRecord as AttendanceRecord;
+            setAttendanceRecords(prev => {
+              if (prev.some(r => r.id === newRec.id)) return prev;
+              return [newRec, ...prev];
+            });
+            setNewAttendanceAlert({ record: newRec, timestamp: Date.now() });
+            setLastAttendanceSyncedAt(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+          } else if (eventInfo?.eventType === 'DELETE' && eventInfo.oldRecord?.id) {
+            setAttendanceRecords(prev => prev.filter(r => r.id !== eventInfo.oldRecord.id));
+          } else {
+            handleSyncAttendanceOnly();
+          }
+        } else {
+          handleSyncOnline();
+        }
+      },
+      (status) => {
+        setRealtimeStatus(status);
+      }
+    );
+
+    // 4. Subscribe to cross-tab BroadcastChannel for 0ms instant multi-tab sync
+    const unsubscribeBroadcast = subscribeToAttendanceBroadcast((msg) => {
+      if (msg.type === 'INSERT') {
+        setAttendanceRecords(prev => {
+          if (prev.some(r => r.id === msg.record.id)) return prev;
+          return [msg.record, ...prev];
+        });
+        setNewAttendanceAlert({ record: msg.record, timestamp: Date.now() });
+        setLastAttendanceSyncedAt(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      } else if (msg.type === 'DELETE') {
+        setAttendanceRecords(prev => prev.filter(r => r.id !== msg.id));
+      } else if (msg.type === 'RELOAD') {
+        handleSyncAttendanceOnly();
+      }
     });
 
-    // 4. Retrieve stored user session if available
+    // 5. Periodic heartbeat check (every 15s) to guarantee zero discrepancy/selisih
+    const heartbeatTimer = setInterval(() => {
+      handleSyncAttendanceOnly();
+    }, 15000);
+
+    // 6. Immediate sync on window focus or visibility change (e.g. waking phone or switching tabs)
+    const handleVisibilitySync = () => {
+      if (document.visibilityState === 'visible') {
+        handleSyncAttendanceOnly();
+      }
+    };
+    window.addEventListener('visibilitychange', handleVisibilitySync);
+    window.addEventListener('focus', handleVisibilitySync);
+
+    // 7. Retrieve stored user session if available
     const storedSession = localStorage.getItem('pkbm_user_session');
     if (storedSession) {
       try {
@@ -117,7 +205,11 @@ export default function App() {
     }
 
     return () => {
-      unsubscribe();
+      unsubscribeSupabase();
+      unsubscribeBroadcast();
+      clearInterval(heartbeatTimer);
+      window.removeEventListener('visibilitychange', handleVisibilitySync);
+      window.removeEventListener('focus', handleVisibilitySync);
     };
   }, []);
 
@@ -345,7 +437,12 @@ export default function App() {
             records={attendanceRecords}
             onDeleteRecord={handleDeleteRecord}
             onRefreshOnline={handleSyncOnline}
-            isSyncing={isSyncing}
+            isSyncing={isSyncing || isFastSyncing}
+            realtimeStatus={realtimeStatus}
+            lastSyncedAt={lastAttendanceSyncedAt}
+            onForceSyncAttendance={handleSyncAttendanceOnly}
+            newAttendanceAlert={newAttendanceAlert}
+            onDismissAlert={() => setNewAttendanceAlert(null)}
           />
         )}
 
